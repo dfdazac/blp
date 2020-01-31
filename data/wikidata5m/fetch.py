@@ -13,12 +13,12 @@ f = open('entities.txt')
 entities = []
 
 WIKIDATA_BASE_REQUEST = 'https://www.wikidata.org/w/api.php' \
-                        '?action=wbgetentities&ids={:s}' \
+                        '?action=wbgetentities&' \
                         '&props=sitelinks&sitefilter=enwiki&format=json'
 
 WIKIPEDIA_BASE_REQUEST = 'https://en.wikipedia.org/w/api.php' \
                          '?format=json&action=query&prop=extracts&exintro' \
-                         '&explaintext&redirects=1&titles={:s}'
+                         '&explaintext&redirects=1'
 
 OUT_FNAME = 'descriptions.txt'
 
@@ -45,7 +45,7 @@ def get_extracts_from_pages(pages):
 # Read entities to fetch
 for i, line in enumerate(f):
     entities.append(line.rstrip('\n'))
-    if i == 100:
+    if i == 1000:
         break
 
 no_wiki_count = 0
@@ -55,11 +55,10 @@ print('Retrieving Wikipedia page titles...', flush=True)
 for i in tqdm(range(0, len(entities), MAX_ENTITIES)):
     # Build request URL from entities
     to_fetch = entities[i:i + MAX_ENTITIES]
-    to_fetch_url = '|'.join(to_fetch)
-    req_url = WIKIDATA_BASE_REQUEST.format(to_fetch_url)
+    ids_param = '|'.join(to_fetch)
 
     # Request Wikipedia page titles from Wikidata
-    r = requests.get(req_url)
+    r = requests.get(WIKIDATA_BASE_REQUEST, params={'ids': ids_param})
     link_data = r.json()['entities']
     ent_pages = []
 
@@ -68,23 +67,36 @@ for i in tqdm(range(0, len(entities), MAX_ENTITIES)):
         if 'enwiki' in link_data[e]['sitelinks']:
             title = link_data[e]['sitelinks']['enwiki']['title']
             ent_pages.append((e, title))
+        else:
+            no_wiki_count += 1
 
     titles = [title for (e, title) in ent_pages]
-    titles_url = '|'.join(titles)
-    req_url = WIKIPEDIA_BASE_REQUEST.format(titles_url)
+    titles_param = '|'.join(titles)
+    req_url = WIKIPEDIA_BASE_REQUEST
 
     # Request first Wikipedia section
-    r = requests.get(req_url)
+    r = requests.get(WIKIPEDIA_BASE_REQUEST, params={'titles': titles_param})
+
     text_data = r.json()
     extracts = get_extracts_from_pages(text_data['query']['pages'])
+    redirects = text_data['query'].get('redirects')
+    redir_titles = {}
+    if redirects:
+        redir_titles = {r['from']: r['to'] for r in redirects}
+
     # Usually only some results are returned, so request continuation
     while 'continue' in text_data:
-        r = requests.get(req_url, params={**text_data['continue']})
+        r = requests.get(req_url, params={**text_data['continue'],
+                                          'titles': titles_param})
         text_data = r.json()
         extracts.update(get_extracts_from_pages(text_data['query']['pages']))
 
     # Save to file
     for (entity, title) in ent_pages:
+        # Was there a redirect?
+        if title in redir_titles:
+            title = redir_titles[title]
+
         out_file.write(f'{entity} {title} #### {extracts[title]}\n')
 
 

@@ -132,3 +132,6 @@ dmypy.json
 
 # Data files
 data/wikidata5m/*.txt
+
+# vim files
+*.swp
