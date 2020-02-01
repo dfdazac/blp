@@ -17,7 +17,7 @@ WIKIPEDIA_BASE_URL = 'https://en.wikipedia.org/w/api.php' \
                      '?format=json&action=query&prop=extracts&exintro' \
                      '&explaintext&redirects=1'
 
-IN_FNAME = 'entities.txt'
+IN_FNAME = 'ent-debug.txt'
 OUT_FNAME = 'descriptions.txt'
 NO_FNAME = 'no_wiki.txt'
 
@@ -76,8 +76,9 @@ for i in tqdm(range(0, len(entities), MAX_ENTITIES)):
     ent_pages = []
 
     for e in to_fetch:
+        ent_data = link_data[e]
         # Check if enwiki page exists
-        if 'enwiki' in link_data[e]['sitelinks']:
+        if 'missing' not in ent_data and 'enwiki' in ent_data['sitelinks']:
             title = link_data[e]['sitelinks']['enwiki']['title']
             ent_pages.append((e, title))
         else:
