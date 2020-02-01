@@ -5,6 +5,7 @@ entities. The list is retrieved from entities.txt
 import requests
 from tqdm import tqdm
 import time
+from argparse import ArgumentParser
 
 # Maximum number of entities allowed by Wiki APIs
 MAX_ENTITIES = 50
@@ -16,10 +17,6 @@ WIKIDATA_BASE_URL = 'https://www.wikidata.org/w/api.php' \
 WIKIPEDIA_BASE_URL = 'https://en.wikipedia.org/w/api.php' \
                      '?format=json&action=query&prop=extracts&exintro' \
                      '&explaintext&redirects=1'
-
-IN_FNAME = 'ent-debug.txt'
-OUT_FNAME = 'descriptions.txt'
-NO_FNAME = 'no_wiki.txt'
 
 
 def get_extracts_from_pages(pages):
@@ -52,71 +49,91 @@ def get_retry(url, params, delay=5):
             continue
 
 
-f = open(IN_FNAME)
-entities = []
+def retrieve_pages(in_fname):
+    out_fname = f'descriptions-{in_fname}'
+    no_fname = f'no-wiki-{in_fname}'
 
-# Read entities to fetch
-for i, line in enumerate(f):
-    entities.append(line.rstrip('\n'))
+    f = open(in_fname)
+    entities = []
 
-no_wiki_count = 0
-fetched_count = 0
-out_file = open(OUT_FNAME, 'w')
-no_wifi_file = open(NO_FNAME, 'w')
+    # Read entities to fetch
+    print(f'Reading entities from {in_fname}')
+    for i, line in enumerate(f):
+        entities.append(line.rstrip('\n'))
 
-print('Retrieving Wikipedia page titles...', flush=True)
-for i in tqdm(range(0, len(entities), MAX_ENTITIES)):
-    # Build request URL from entities
-    to_fetch = entities[i:i + MAX_ENTITIES]
-    ids_param = '|'.join(to_fetch)
+    no_wiki_count = 0
+    fetched_count = 0
+    out_file = open(out_fname, 'w')
+    no_wifi_file = open(no_fname, 'w')
 
-    # Request Wikipedia page titles from Wikidata
-    r = get_retry(WIKIDATA_BASE_URL, params={'ids': ids_param})
-    link_data = r.json()['entities']
-    ent_pages = []
+    print('Retrieving Wikipedia pages...', flush=True)
+    for i in tqdm(range(0, len(entities), MAX_ENTITIES)):
+        # Build request URL from entities
+        to_fetch = entities[i:i + MAX_ENTITIES]
+        ids_param = '|'.join(to_fetch)
 
-    for e in to_fetch:
-        ent_data = link_data[e]
-        # Check if enwiki page exists
-        if 'missing' not in ent_data and 'enwiki' in ent_data['sitelinks']:
-            title = link_data[e]['sitelinks']['enwiki']['title']
-            ent_pages.append((e, title))
-        else:
-            no_wiki_count += 1
-            no_wifi_file.write(f'{e}\n')
+        # Request Wikipedia page titles from Wikidata
+        r = get_retry(WIKIDATA_BASE_URL, params={'ids': ids_param})
+        link_data = r.json()['entities']
+        ent_pages = []
 
-    titles = [title for (e, title) in ent_pages]
-    titles_param = '|'.join(titles)
-    req_url = WIKIPEDIA_BASE_URL
+        for e in to_fetch:
+            ent_data = link_data[e]
+            # Check if enwiki page exists
+            if 'missing' not in ent_data and 'enwiki' in ent_data['sitelinks']:
+                title = link_data[e]['sitelinks']['enwiki']['title']
+                ent_pages.append((e, title))
+            else:
+                no_wiki_count += 1
+                no_wifi_file.write(f'{e}\n')
 
-    # Request first Wikipedia section
-    r = get_retry(WIKIPEDIA_BASE_URL, params={'titles': titles_param})
+        titles = [title for (e, title) in ent_pages]
+        titles_param = '|'.join(titles)
+        req_url = WIKIPEDIA_BASE_URL
 
-    text_data = r.json()
-    extracts = get_extracts_from_pages(text_data['query']['pages'])
-    redirects = text_data['query'].get('redirects')
-    redir_titles = {}
-    if redirects:
-        redir_titles = {r['from']: r['to'] for r in redirects}
+        # Request first Wikipedia section
+        r = get_retry(WIKIPEDIA_BASE_URL, params={'titles': titles_param})
 
-    # Usually only some results are returned, so request continuation
-    while 'continue' in text_data:
-        r = requests.get(req_url, params={**text_data['continue'],
-                                          'titles': titles_param})
         text_data = r.json()
-        extracts.update(get_extracts_from_pages(text_data['query']['pages']))
+        extracts = get_extracts_from_pages(text_data['query']['pages'])
+        redirects = text_data['query'].get('redirects')
+        redir_titles = {}
+        if redirects:
+            redir_titles = {r['from']: r['to'] for r in redirects}
 
-    # Save to file
-    for (entity, title) in ent_pages:
-        # If there was a redirect, change title accordingly
-        if title in redir_titles:
-            title = redir_titles[title]
+        # Usually only some results are returned, so request continuation
+        while 'continue' in text_data:
+            r = requests.get(req_url, params={**text_data['continue'],
+                                              'titles': titles_param})
+            text_data = r.json()
+            extracts.update(get_extracts_from_pages(text_data['query']['pages']))
 
-        out_file.write(f'{entity} {title}: {extracts[title]}\n')
-        fetched_count += 1
+        # Save to file
+        for (entity, title) in ent_pages:
+            # If there was a redirect, change title accordingly
+            if title in redir_titles:
+                title = redir_titles[title]
+
+            if title in extracts:
+                out_file.write(f'{entity} {title}: {extracts[title]}\n')
+                fetched_count += 1
+            else:
+                # This might mean Wikidata reported a Wikipedia page, but
+                # it actually doesn't exist
+                no_wiki_count += 1
+                no_wifi_file.write(f'{entity}\n')
+
+    print(f'Retrieved {fetched_count:d} pages.'
+          f'There were {no_wiki_count:d} entities with no Wikipedia page.')
+    print(f'Saved entities and pages in {out_fname}')
+    print(f'Saved entities with no pages in {no_fname}')
 
 
-print(f'Retrieved {fetched_count:d} pages.'
-      f'There were {no_wiki_count:d} entities with no Wikipedia page.')
-print(f'Saved entities and pages in {OUT_FNAME}')
-print(f'Saved entities with no pages in {NO_FNAME}')
+if __name__ == '__main__':
+    parser = ArgumentParser(description='Extract Wikipedia pages for a file'
+                                        'with a list of Wikidata entities.')
+    parser.add_argument('file', help='File with a list of entities')
+    args = parser.parse_args()
+
+    retrieve_pages(args.file)
+
