@@ -43,8 +43,8 @@ def get_retry(url, params, delay=5):
     error."""
     while True:
         try:
-            return requests.get(url, params)
-        except requests.exceptions.ConnectionError:
+            return requests.get(url, params, timeout=10)
+        except requests.exceptions.RequestException:
             time.sleep(delay)
             continue
 
@@ -103,8 +103,8 @@ def retrieve_pages(in_fname):
 
         # Usually only some results are returned, so request continuation
         while 'continue' in text_data:
-            r = requests.get(req_url, params={**text_data['continue'],
-                                              'titles': titles_param})
+            r = get_retry(req_url, params={**text_data['continue'],
+                                           'titles': titles_param})
             text_data = r.json()
             extracts.update(get_extracts_from_pages(text_data['query']['pages']))
 
@@ -115,7 +115,7 @@ def retrieve_pages(in_fname):
                 title = redir_titles[title]
 
             if title in extracts:
-                out_file.write(f'{entity} {title}: {extracts[title]}\n')
+                out_file.write(f'{entity} {title} #### {extracts[title]}\n')
                 fetched_count += 1
             else:
                 # This might mean Wikidata reported a Wikipedia page, but
