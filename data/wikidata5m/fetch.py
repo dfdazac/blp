@@ -5,6 +5,7 @@ entities. The list is retrieved from entities.txt
 import requests
 from tqdm import tqdm
 import time
+import re
 from argparse import ArgumentParser
 
 # Maximum number of entities allowed by Wiki APIs
@@ -17,6 +18,8 @@ WIKIDATA_BASE_URL = 'https://www.wikidata.org/w/api.php' \
 WIKIPEDIA_BASE_URL = 'https://en.wikipedia.org/w/api.php' \
                      '?format=json&action=query&prop=extracts&exintro' \
                      '&explaintext&redirects=1'
+
+DELIM = '####'
 
 
 def get_extracts_from_pages(pages):
@@ -53,12 +56,12 @@ def retrieve_pages(in_fname):
     out_fname = f'descriptions-{in_fname}'
     no_fname = f'no-wiki-{in_fname}'
 
-    f = open(in_fname)
+    in_file = open(in_fname)
     entities = []
 
     # Read entities to fetch
     print(f'Reading entities from {in_fname}')
-    for i, line in enumerate(f):
+    for i, line in enumerate(in_file):
         entities.append(line.rstrip('\n'))
 
     no_wiki_count = 0
@@ -115,7 +118,7 @@ def retrieve_pages(in_fname):
                 title = redir_titles[title]
 
             if title in extracts:
-                out_file.write(f'{entity} {title} #### {extracts[title]}\n')
+                out_file.write(f'{entity} {title} {DELIM} {extracts[title]}\n')
                 fetched_count += 1
             else:
                 # This might mean Wikidata reported a Wikipedia page, but
@@ -129,11 +132,36 @@ def retrieve_pages(in_fname):
     print(f'Saved entities with no pages in {no_fname}')
 
 
+def clean(in_fname, min_tokens=5):
+    """Read a file with entity descriptions, and save a clean copy with:
+    - No entities with less than min_tokens words in the description
+    - Long spaces collapsed to a single one
+    """
+    in_file = open(in_fname)
+    out_file = open(f'clean-{in_fname}', 'w')
+
+    rex = re.compile(r'\s+')
+
+    for line in in_file:
+        desc_idx = line.find(DELIM) + len(DELIM)
+        prefix, desc = line[:desc_idx], line[desc_idx:]
+        desc = rex.sub(' ', desc).strip()
+        desc = desc.replace(u'\u200b', '')
+        desc = desc.replace(u'\u200e', '')
+        tokens = desc.split(' ')
+        if len(tokens) > min_tokens:
+            out_file.write(f'{prefix} {desc}\n')
+
+
 if __name__ == '__main__':
     parser = ArgumentParser(description='Extract Wikipedia pages for a file'
                                         'with a list of Wikidata entities.')
+    parser.add_argument('command', choices=['fetch', 'clean'])
     parser.add_argument('file', help='File with a list of entities')
     args = parser.parse_args()
 
-    retrieve_pages(args.file)
+    if args.command == 'fetch':
+        retrieve_pages(args.file)
+    elif args.command == 'clean':
+        clean(args.file)
 
