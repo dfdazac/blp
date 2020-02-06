@@ -1,7 +1,3 @@
-"""Fetch the first section of a Wikipedia page given a list of Wikidata
-entities. The list is retrieved from entities.txt
-"""
-
 import requests
 from tqdm import tqdm
 import time
@@ -52,17 +48,31 @@ def get_retry(url, params, delay=5):
             continue
 
 
+def read_entities(ent_fname):
+    """Extract a list of entities from a text file with one entity per line.
+
+    Args:
+        ent_fname: str, name of the file containing entities.
+    Returns:
+        list, containing entities as str
+    """
+
+    in_file = open(ent_fname)
+    entities = []
+
+    # Read entities to fetch
+    print(f'Reading entities from {ent_fname}')
+    for i, line in enumerate(in_file):
+        entities.append(line.rstrip('\n'))
+
+    return entities
+
+
 def retrieve_pages(in_fname):
     out_fname = f'descriptions-{in_fname}'
     no_fname = f'no-wiki-{in_fname}'
 
-    in_file = open(in_fname)
-    entities = []
-
-    # Read entities to fetch
-    print(f'Reading entities from {in_fname}')
-    for i, line in enumerate(in_file):
-        entities.append(line.rstrip('\n'))
+    entities = read_entities(in_fname)
 
     no_wiki_count = 0
     fetched_count = 0
@@ -132,6 +142,28 @@ def retrieve_pages(in_fname):
     print(f'Saved entities with no pages in {no_fname}')
 
 
+def discard_triples(triples_fname, ent_fname):
+    """Read a file with triples and save a copy, keeping only triples involving
+    entities listed in a separate file.
+
+    Args:
+        triples_fname: str, file with one triple per line
+        ent_fname: str, file with one entity per line
+    """
+    triples_file = open(triples_fname)
+    out_file = open(f'filtered-{triples_fname}', 'w')
+
+    entities = set(read_entities(ent_fname))
+
+    print('Filtering triples...')
+    for line in triples_file:
+        head, rel, tail = line.split()
+        if head in entities and tail in entities:
+            out_file.write(f'{head} {rel} {tail}\n')
+
+    print(f'Saved filtered triples in {out_file}')
+
+
 def clean(in_fname, min_tokens=5):
     """Read a file with entity descriptions, and save a clean copy with:
     - No entities with less than min_tokens words in the description
@@ -156,12 +188,15 @@ def clean(in_fname, min_tokens=5):
 if __name__ == '__main__':
     parser = ArgumentParser(description='Extract Wikipedia pages for a file'
                                         'with a list of Wikidata entities.')
-    parser.add_argument('command', choices=['fetch', 'clean'])
-    parser.add_argument('file', help='File with a list of entities')
+    parser.add_argument('command', choices=['fetch', 'clean', 'discard'])
+    parser.add_argument('--ent_file', help='File with a list of entities')
+    parser.add_argument('--triples_file', help='File with a list of triples')
     args = parser.parse_args()
 
     if args.command == 'fetch':
-        retrieve_pages(args.file)
+        retrieve_pages(args.ent_file)
     elif args.command == 'clean':
-        clean(args.file)
+        clean(args.ent_file)
+    elif args.command == 'discard':
+        discard_triples(args.triples_file, args.ent_file)
 
