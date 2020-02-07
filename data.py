@@ -23,12 +23,12 @@ class GraphDataset(Dataset):
         if not osp.exists(out_path):
             os.mkdir(out_path)
 
+            # Create maps from entity and relation strings to unique IDs
             ent_ids = defaultdict(lambda: len(ent_ids))
             rel_ids = defaultdict(lambda: len(rel_ids))
             triples = []
 
             file = open(triples_file)
-
             for i, line in enumerate(file):
                 head, rel, tail = line.split()
                 triples.append([ent_ids[head], rel_ids[rel], ent_ids[tail]])
@@ -36,6 +36,7 @@ class GraphDataset(Dataset):
             ent_ids = dict(ent_ids)
             rel_ids = dict(rel_ids)
 
+            # Save separately IDs tensor, and maps
             self.triples = torch.tensor(triples, dtype=torch.long)
             torch.save(self.triples, data_path)
             torch.save({'ent_ids': ent_ids, 'rel_ids': rel_ids}, maps_path)
@@ -68,3 +69,17 @@ class GraphDataset(Dataset):
         neg_triples[triple_idx, corrupt_idx] = corrupt_ent
 
         return pos_triples, neg_triples
+
+
+def make_data_iterator(data_loader):
+    """Create a continuous iterator for a DataLoader.
+
+    Args:
+        data_loader: DataLoader to iterate
+    """
+    iterator = iter(data_loader)
+    while True:
+        try:
+            yield next(iterator)
+        except StopIteration:
+            iterator = iter(data_loader)
