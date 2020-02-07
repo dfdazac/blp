@@ -1,20 +1,30 @@
 from torch.utils.data import DataLoader
 from torch.optim import Adam
-from data import GraphDataset
+
+from data import GraphDataset, make_data_iterator
 from graph import TransE
+import utils
 
-dataset = GraphDataset('data/wikidata5m/triples.txt')
-loader = DataLoader(dataset, collate_fn=dataset.negative_sampling,
-                    batch_size=64, num_workers=4)
-model = TransE(dataset.num_ents, dataset.num_rels, dim=32)
-optimizer = Adam(model.parameters())
+ex = utils.create_experiment()
 
-for i, data in enumerate(loader):
-    loss = model(data)
 
-    optimizer.zero_grad()
-    loss.backward()
-    optimizer.step()
+@ex.automain
+def train(_run, _log):
+    dataset = GraphDataset('data/wikidata5m/triples.txt')
+    loader = DataLoader(dataset, collate_fn=dataset.negative_sampling,
+                        batch_size=64, shuffle=True, num_workers=4)
+    iterator = make_data_iterator(loader)
 
-    if i % 10 == 0:
-        print(f'{i}: {loss.item():.6f}')
+    model = TransE(dataset.num_ents, dataset.num_rels, dim=32)
+    optimizer = Adam(model.parameters())
+    train_iters = 100
+
+    for i, data in enumerate(iterator):
+        loss = model(data)
+
+        optimizer.zero_grad()
+        loss.backward()
+        optimizer.step()
+
+        if i % 10 == 0:
+            _log.info(f'[{i}/{train_iters}]: {loss.item():.6f}')
