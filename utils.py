@@ -10,7 +10,5 @@ def create_experiment():
     database = os.environ.get('MLAB_DB')
     if all([uri, database]):
         ex.observers.append(MongoObserver(uri, database))
-    else:
-        print('Running without Sacred observers')
 
     return ex

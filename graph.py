@@ -7,10 +7,12 @@ class TransE(nn.Module):
     def __init__(self, num_entities, num_relations, dim, margin=1):
         super(TransE, self).__init__()
 
-        # TODO: Initialize
         self.ent_emb = nn.Embedding(num_entities, dim)
         self.rel_emb = nn.Embedding(num_relations, dim)
         self.margin = margin
+
+        nn.init.kaiming_uniform_(self.ent_emb.weight, nonlinearity='linear')
+        nn.init.kaiming_uniform_(self.rel_emb.weight, nonlinearity='linear')
 
     def energy(self, triples):
         head, rel, tail = torch.chunk(triples, chunks=3, dim=1)
@@ -22,9 +24,7 @@ class TransE(nn.Module):
         energy = torch.norm(h + r - t, dim=-1)
         return energy
 
-    def forward(self, data):
-        pos_triples, neg_triples = data
-
+    def forward(self, pos_triples, neg_triples):
         pos_energy = self.energy(pos_triples)
         neg_energy = self.energy(neg_triples)
 

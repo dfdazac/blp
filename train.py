@@ -1,30 +1,37 @@
+import torch
 from torch.utils.data import DataLoader
 from torch.optim import Adam
+from sacred.run import Run
+from logging import Logger
 
 from data import GraphDataset, make_data_iterator
 from graph import TransE
 import utils
 
 ex = utils.create_experiment()
+device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 
 @ex.automain
-def train(_run, _log):
+def train(_run: Run, _log: Logger):
     dataset = GraphDataset('data/wikidata5m/triples.txt')
     loader = DataLoader(dataset, collate_fn=dataset.negative_sampling,
-                        batch_size=64, shuffle=True, num_workers=4)
+                        batch_size=16, shuffle=True, num_workers=4)
     iterator = make_data_iterator(loader)
 
-    model = TransE(dataset.num_ents, dataset.num_rels, dim=32)
+    model = TransE(dataset.num_ents, dataset.num_rels, dim=128).to(device)
     optimizer = Adam(model.parameters())
-    train_iters = 100
+    train_iters = 15000
 
-    for i, data in enumerate(iterator):
-        loss = model(data)
+    for step in range(train_iters):
+        data = next(iterator)
+        pos_triples, neg_triples = data
+        loss = model(pos_triples.to(device), neg_triples.to(device))
 
         optimizer.zero_grad()
         loss.backward()
         optimizer.step()
 
-        if i % 10 == 0:
-            _log.info(f'[{i}/{train_iters}]: {loss.item():.6f}')
+        if step % 100 == 0:
+            _log.info(f'[{step}/{train_iters}]: {loss.item():.6f}')
+            _run.log_scalar('loss', loss.item(), step)

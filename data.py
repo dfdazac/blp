@@ -33,6 +33,7 @@ class GraphDataset(Dataset):
                 head, rel, tail = line.split()
                 triples.append([ent_ids[head], rel_ids[rel], ent_ids[tail]])
 
+            # Convert to dict for serialization
             ent_ids = dict(ent_ids)
             rel_ids = dict(rel_ids)
 
@@ -55,6 +56,10 @@ class GraphDataset(Dataset):
         return self.triples.shape[0]
 
     def negative_sampling(self, data_list):
+        """Given a batch of triples, return it together with a batch of
+        corrupted triples where either the subject or object are replaced
+        by a random entity. Use as a collate_fn for a DataLoader.
+        """
         pos_triples = torch.stack(data_list)
         num_triples = pos_triples.shape[0]
 
