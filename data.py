@@ -70,7 +70,7 @@ class GraphDataset(Dataset):
         corrupt_ent = torch.tensor(corrupt_ent)
         triple_idx = torch.arange(num_triples)
 
-        neg_triples = pos_triples[triple_idx]
+        neg_triples = pos_triples.clone()
         neg_triples[triple_idx, corrupt_idx] = corrupt_ent
 
         return pos_triples, neg_triples

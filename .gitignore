@@ -129,9 +129,11 @@ dmypy.json
 .pyre/
 
 .idea/
+jobs/
 
 # Data files
-data/wikidata5m/*.txt
+data/
+!data/utils.py
 
 # vim files
 *.swp

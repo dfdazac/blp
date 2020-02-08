@@ -12,16 +12,25 @@ ex = utils.create_experiment()
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 
+@ex.config
+def config():
+    lr = 1e-2
+    margin = 1
+    p_norm = 1
+
+
 @ex.automain
-def train(_run: Run, _log: Logger):
+def train(lr, margin, p_norm,
+          _run: Run, _log: Logger):
     dataset = GraphDataset('data/wikidata5m/triples.txt')
     loader = DataLoader(dataset, collate_fn=dataset.negative_sampling,
-                        batch_size=16, shuffle=True, num_workers=4)
+                        batch_size=64, shuffle=True, num_workers=4)
     iterator = make_data_iterator(loader)
 
-    model = TransE(dataset.num_ents, dataset.num_rels, dim=128).to(device)
-    optimizer = Adam(model.parameters())
-    train_iters = 15000
+    model = TransE(dataset.num_ents, dataset.num_rels, dim=64,
+                   margin=margin, p_norm=p_norm).to(device)
+    optimizer = Adam(model.parameters(), lr)
+    train_iters = 25000
 
     for step in range(train_iters):
         data = next(iterator)
