@@ -17,12 +17,13 @@ def config():
     lr = 1e-2
     margin = 1
     p_norm = 1
-    epochs = 2
+    epochs = 100
 
 
+@ex.capture
 @torch.no_grad()
-def evaluate(model, loader):
-    hits_at_10 = 0.0
+def evaluate(model, loader, epoch, _run: Run, _log: Logger):
+    hits = 0.0
     mrr = 0.0
 
     all_ents = torch.arange(end=model.num_entities, device=device).unsqueeze(0)
@@ -37,49 +38,56 @@ def evaluate(model, loader):
         pred_ents = torch.cat((tails_predictions, heads_predictions))
         true_ents = torch.cat((tail, head))
 
-        hits_at_10 += utils.hit_at_k(pred_ents, true_ents, k=10)
+        hits += utils.hit_at_k(pred_ents, true_ents, k=10)
         mrr += utils.mrr(pred_ents, true_ents)
 
-    hits_at_10 = hits_at_10 / len(loader)
+    hits = hits / len(loader)
     mrr = mrr / len(loader)
 
-    return mrr, hits_at_10
+    _log.info(f'mrr: {mrr:.4f}  hits@10: {hits:.4f}')
+    _run.log_scalar('valid_mrr', mrr, epoch)
+    _run.log_scalar('valid_hits@10', hits, epoch)
 
 
 @ex.automain
-def train(lr, margin, p_norm, epochs,
-          _run: Run, _log: Logger):
+def train(lr, margin, p_norm, epochs, _run: Run, _log: Logger):
     train_data = GraphDataset('data/fb15k-237/train.txt')
     train_loader = DataLoader(train_data, batch_size=64, shuffle=True,
                               collate_fn=train_data.negative_sampling,
                               num_workers=4)
+
     valid_data = GraphDataset('data/fb15k-237/valid.txt')
     valid_loader = DataLoader(valid_data, batch_size=64)
+
+    test_data = GraphDataset('data/fb15k-237/test.txt')
+    test_loader = DataLoader(test_data, batch_size=64)
 
     model = TransE(train_data.num_ents, train_data.num_rels, dim=64,
                    margin=margin, p_norm=p_norm).to(device)
     optimizer = Adam(model.parameters(), lr)
 
+    steps = 0
     for epoch in range(1, epochs + 1):
         train_loss = 0
-        for step, data in enumerate(train_loader):
+        for data in train_loader:
             pos_triples, neg_triples = data
             loss = model(pos_triples.to(device), neg_triples.to(device))
 
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
+            steps += 1
 
             train_loss += loss.item()
 
-            if step % 100 == 0:
+            if steps % 200 == 0:
                 _log.info(f'Epoch {epoch}/{epochs} '
-                          f'[{step}/{len(train_loader)}]: {loss.item():.6f}')
-                _run.log_scalar('batch_loss', loss.item(), step)
+                          f'[{steps}/{len(train_loader)}]: {loss.item():.6f}')
+                _run.log_scalar('batch_loss', loss.item(), steps)
 
         _run.log_scalar('train_loss', train_loss/len(train_loader))
+        _log.info('Evaluating on validation set...')
+        evaluate(model, valid_loader, epoch)
 
-        mrr, hits = evaluate(model, valid_loader)
-        _log.info(f'Validation - mrr: {mrr:.4f}  hits@10: {hits:.4f}')
-        _run.log_scalar('valid_mrr', mrr, epoch)
-        _run.log_scalar('valid_hits@10', hits, epoch)
+    _log.info('Evaluating on test set...')
+    evaluate(model, test_loader, epochs)
