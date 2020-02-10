@@ -42,5 +42,5 @@ def mrr(predictions, ground_truth_idx):
     Returns: float, Mean reciprocal rank score
     """
     indices = predictions.argsort()
-    rankings = torch.gather(indices, dim=1, index=ground_truth_idx) + 1
-    return torch.mean(rankings.float().reciprocal()).item()
+    rankings = (indices == ground_truth_idx).nonzero()[:, 1].float() + 1.0
+    return torch.mean(rankings.reciprocal()).item()
