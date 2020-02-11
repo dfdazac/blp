@@ -3,6 +3,7 @@ from tqdm import tqdm
 import time
 import re
 from argparse import ArgumentParser
+import json
 
 # Maximum number of entities allowed by Wiki APIs
 MAX_ENTITIES = 50
@@ -151,7 +152,7 @@ def discard_triples(triples_fname, ent_fname):
         ent_fname: str, file with one entity per line
     """
     triples_file = open(triples_fname)
-    out_file = open(f'filtered-{triples_fname}', 'w')
+    out_file = open(f'{triples_fname}.filt', 'w')
 
     entities = set(read_entities(ent_fname))
 
@@ -161,7 +162,7 @@ def discard_triples(triples_fname, ent_fname):
         if head in entities and tail in entities:
             out_file.write(f'{head} {rel} {tail}\n')
 
-    print(f'Saved filtered triples in {out_file}')
+    print(f'Saved filtered triples in {triples_fname}.filt')
 
 
 def clean(in_fname, min_tokens=5):
@@ -170,7 +171,7 @@ def clean(in_fname, min_tokens=5):
     - Long spaces collapsed to a single one
     """
     in_file = open(in_fname)
-    out_file = open(f'clean-{in_fname}', 'w')
+    out_file = open(f'{in_fname}.clean', 'w')
 
     rex = re.compile(r'\s+')
 
@@ -181,22 +182,54 @@ def clean(in_fname, min_tokens=5):
         desc = desc.replace(u'\u200b', '')
         desc = desc.replace(u'\u200e', '')
         tokens = desc.split(' ')
-        if len(tokens) > min_tokens:
+        if len(tokens) >= min_tokens:
             out_file.write(f'{prefix} {desc}\n')
+
+
+def get_wikidata_freebase_map(in_file):
+    """Create a dictionary from Wikidata to Freebase IDs, using
+    entity2wikidata,json
+    """
+    with open(in_file) as f:
+        fb_json = json.load(f)
+
+    wikidata2fb = dict()
+    for fb_id in fb_json:
+        wikidata2fb[fb_json[fb_id]['wikidata_id']] = fb_id
+
+    return wikidata2fb
+
+
+def write_descriptions(in_file, desc_file):
+    """Retrieve Wikipedia descriptions for Freebase entities listed in
+    in_file."""
+    wikidata2fb = get_wikidata_freebase_map(in_file)
+    wikipedia = open(desc_file)
+    out_file = open(f'{in_file}.desc', 'w')
+
+    for line in wikipedia:
+        title_idx = line.find(' ')
+        wikidata_id = line[:title_idx].strip()
+        if wikidata_id in wikidata2fb:
+            description = line[title_idx:]
+            out_file.write(f'{wikidata2fb[wikidata_id]}{description}')
 
 
 if __name__ == '__main__':
     parser = ArgumentParser(description='Extract Wikipedia pages for a file'
                                         'with a list of Wikidata entities.')
-    parser.add_argument('command', choices=['fetch', 'clean', 'discard'])
-    parser.add_argument('--ent_file', help='File with a list of entities')
+    parser.add_argument('command', choices=['fetch', 'clean', 'discard',
+                                            'describe'])
+    parser.add_argument('--in_file', help='File with a list of entities')
     parser.add_argument('--triples_file', help='File with a list of triples')
+    parser.add_argument('--desc_file', help='File with Wikipedia descriptions')
     args = parser.parse_args()
 
     if args.command == 'fetch':
-        retrieve_pages(args.ent_file)
+        retrieve_pages(args.in_file)
     elif args.command == 'clean':
-        clean(args.ent_file)
+        clean(args.in_file)
     elif args.command == 'discard':
-        discard_triples(args.triples_file, args.ent_file)
-
+        discard_triples(args.triples_file, args.in_file)
+    elif args.command == 'describe':
+        write_descriptions(args.in_file, args.desc_file)
