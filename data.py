@@ -6,6 +6,7 @@ import torch
 from torch.utils.data import Dataset
 
 UNK = '[UNK]'
+DELIM = '####'
 
 
 class GraphDataset(Dataset):
@@ -57,6 +58,7 @@ class GraphDataset(Dataset):
 
         self.num_ents = len(ent_ids)
         self.num_rels = len(rel_ids)
+        self.maps_path = maps_path
 
     def __getitem__(self, index):
         return self.triples[index]
@@ -83,3 +85,40 @@ class GraphDataset(Dataset):
         neg_triples[triple_idx, corrupt_idx] = corrupt_ent
 
         return pos_triples, neg_triples
+
+
+class TextGraphDataset(GraphDataset):
+    """A dataset storing a graph, and textual descriptions of its entities.
+
+    Args:
+        triples_file: str, path to the file containing triples. This is a
+            text file where each line contains a triple of the form
+            'subject predicate object'
+        text_file: str, path to the file containing entity descriptions.
+            Assumes one description per line for each entity, starting with
+            the entity ID, followed by the description.
+    """
+    def __init__(self, triples_file, text_file):
+        super(TextGraphDataset, self).__init__(triples_file)
+
+        maps = torch.load(self.maps_path)
+        ent_ids, rel_ids = maps['ent_ids'], maps['rel_ids']
+        ent_ids = defaultdict(lambda: ent_ids[UNK], ent_ids)
+
+        # Read descriptions, and build a map from entity ID to text
+        ent2text = dict()
+
+        text = open(text_file)
+
+        for line in text:
+            name_start = line.find(' ')
+            name_end = line.find(DELIM)
+            entity = line[:name_start].strip()
+            ent2text[ent_ids[entity]] = line[name_start:name_end].strip()
+
+        print('Done reading')
+
+
+if __name__ == '__main__':
+    g = TextGraphDataset('data/wikifb15k-237/train.txt',
+                         'data/wikifb15k-237/descriptions.txt')
