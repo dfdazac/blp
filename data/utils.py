@@ -165,6 +165,19 @@ def discard_triples(triples_fname, ent_fname):
     print(f'Saved filtered triples in {triples_fname}.filt')
 
 
+def discard_descriptions(desc_file, ent_fname):
+    entities = set(read_entities(ent_fname))
+
+    descriptions = open(desc_file)
+    out_file = open(f'{desc_file}.disc', 'w')
+
+    for line in descriptions:
+        ent_id = line[:line.find(' ')].strip()
+        if ent_id in entities:
+            out_file.write(line)
+
+
+
 def clean(in_fname, min_tokens=5):
     """Read a file with entity descriptions, and save a clean copy with:
     - No entities with less than min_tokens words in the description
@@ -219,7 +232,7 @@ if __name__ == '__main__':
     parser = ArgumentParser(description='Extract Wikipedia pages for a file'
                                         'with a list of Wikidata entities.')
     parser.add_argument('command', choices=['fetch', 'clean', 'discard',
-                                            'describe'])
+                                            'describe', 'discard_desc'])
     parser.add_argument('--in_file', help='File with a list of entities')
     parser.add_argument('--triples_file', help='File with a list of triples')
     parser.add_argument('--desc_file', help='File with Wikipedia descriptions')
@@ -233,3 +246,5 @@ if __name__ == '__main__':
         discard_triples(args.triples_file, args.in_file)
     elif args.command == 'describe':
         write_descriptions(args.in_file, args.desc_file)
+    elif args.command == 'discard_desc':
+        discard_descriptions(args.desc_file, args.in_file)
