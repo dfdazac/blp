@@ -14,10 +14,11 @@ device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 @ex.config
 def config():
+    dim = 100
     lr = 1e-2
     margin = 1
     p_norm = 1
-    epochs = 100
+    max_epochs = 600
 
 
 @ex.capture
@@ -50,44 +51,42 @@ def evaluate(model, loader, epoch, _run: Run, _log: Logger):
 
 
 @ex.automain
-def train(lr, margin, p_norm, epochs, _run: Run, _log: Logger):
-    train_data = GraphDataset('data/fb15k-237/train.txt')
-    train_loader = DataLoader(train_data, batch_size=64, shuffle=True,
+def train(dim, lr, margin, p_norm, max_epochs, _run: Run, _log: Logger):
+    train_data = GraphDataset('data/wikifb15k-237/train.txt')
+    train_loader = DataLoader(train_data, batch_size=128, shuffle=True,
                               collate_fn=train_data.negative_sampling,
                               num_workers=4)
 
-    valid_data = GraphDataset('data/fb15k-237/valid.txt')
-    valid_loader = DataLoader(valid_data, batch_size=64)
+    valid_data = GraphDataset('data/wikifb15k-237/valid.txt')
+    valid_loader = DataLoader(valid_data, batch_size=128)
 
-    test_data = GraphDataset('data/fb15k-237/test.txt')
-    test_loader = DataLoader(test_data, batch_size=64)
+    test_data = GraphDataset('data/wikifb15k-237/test.txt')
+    test_loader = DataLoader(test_data, batch_size=128)
 
-    model = TransE(train_data.num_ents, train_data.num_rels, dim=64,
+    model = TransE(train_data.num_ents, train_data.num_rels, dim=dim,
                    margin=margin, p_norm=p_norm).to(device)
     optimizer = Adam(model.parameters(), lr)
 
-    steps = 0
-    for epoch in range(1, epochs + 1):
+    for epoch in range(1, max_epochs + 1):
         train_loss = 0
-        for data in train_loader:
+        for step, data in enumerate(train_loader):
             pos_triples, neg_triples = data
             loss = model(pos_triples.to(device), neg_triples.to(device))
 
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
-            steps += 1
 
             train_loss += loss.item()
 
-            if steps % 200 == 0:
-                _log.info(f'Epoch {epoch}/{epochs} '
-                          f'[{steps}/{len(train_loader)}]: {loss.item():.6f}')
-                _run.log_scalar('batch_loss', loss.item(), steps)
+            if step % 200 == 0:
+                _log.info(f'Epoch {epoch}/{max_epochs} '
+                          f'[{step}/{len(train_loader)}]: {loss.item():.6f}')
+                _run.log_scalar('batch_loss', loss.item())
 
-        _run.log_scalar('train_loss', train_loss/len(train_loader))
+        _run.log_scalar('train_loss', train_loss/len(train_loader), epoch)
         _log.info('Evaluating on validation set...')
         evaluate(model, valid_loader, epoch)
 
     _log.info('Evaluating on test set...')
-    evaluate(model, test_loader, epochs)
+    evaluate(model, test_loader, max_epochs)
