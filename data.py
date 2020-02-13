@@ -160,17 +160,38 @@ class TextGraphDataset(GraphDataset):
                         tokens = tokenizer.encode(text, max_length=max_len,
                                                   return_tensors='pt')
 
-                        # First cell contains sequence length
                         length = tokens.shape[1]
-                        text_data[ent_ids[entity], 0] = length
-                        # The rest of the row contains token IDs
-                        text_data[ent_ids[entity], 1:length + 1] = tokens
+                        # Starting slice of row contains token IDs
+                        text_data[ent_ids[entity], :length] = tokens
+                        # Last cell contains sequence length
+                        text_data[ent_ids[entity], -1] = length
 
                     torch.save(text_data, data_path)
                 else:
                     text_data = torch.load(data_path)
 
         self.text_data = text_data
+
+    def negative_sampling(self, data_list):
+        pos_pairs, neg_pairs, rels = super().negative_sampling(data_list)
+        split = pos_pairs.shape[0]
+        pairs = torch.cat((pos_pairs, neg_pairs))
+
+        # Convert pairs to 3D tensor of token IDs and sequence length
+        # Shape: Bx2x(L + 1), where L is the maximum length sequence
+        pairs_data = self.text_data[pairs]
+        max_len = pairs_data.shape[-1] - 1
+
+        # Separate tokens from lengths
+        tokens, lengths = pairs_data.split(max_len, dim=-1)
+        max_batch_len = lengths.max()
+        # Truncate batch
+        tokens = tokens[:, :, :max_batch_len]
+
+        # Recover positive/negative split
+        pos_pairs_tokens, neg_pairs_tokens = tokens.split(split, dim=0)
+
+        return pos_pairs_tokens, neg_pairs_tokens, rels
 
 
 if __name__ == '__main__':
@@ -185,4 +206,7 @@ if __name__ == '__main__':
     gte = TextGraphDataset('data/wikifb15k-237/test.txt',
                            text_data=gtr.text_data)
 
-    print([g.text_data.shape for g in (gtr, gva, gte)])
+    from torch.utils.data import DataLoader
+
+    loader = DataLoader(gtr, batch_size=8, collate_fn=gtr.negative_sampling)
+    next(iter(loader))
