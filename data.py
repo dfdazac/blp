@@ -40,12 +40,12 @@ class GraphDataset(Dataset):
     def __init__(self, triples_file, ents_file=None, rels_file=None):
         base_path = osp.dirname(triples_file)
         filename = osp.basename(triples_file)
-        out_path = osp.join(base_path, 'processed')
-        data_path = osp.join(out_path, f'{filename}.pt')
-        maps_path = osp.join(out_path, 'maps.pt')
+        self.out_path = osp.join(base_path, 'processed')
+        data_path = osp.join(self.out_path, f'{filename}.pt')
+        maps_path = osp.join(self.out_path, 'maps.pt')
 
-        if not osp.exists(out_path):
-            os.mkdir(out_path)
+        if not osp.exists(self.out_path):
+            os.mkdir(self.out_path)
 
         # Create or load maps from entity and relation strings to unique IDs
         if not osp.exists(maps_path):
@@ -123,8 +123,11 @@ class TextGraphDataset(GraphDataset):
             Assumes one description per line for each entity, starting with
             the entity ID, followed by its description.
         tokenizer: transformers.PreTrainedTokenizer
-        text_data: torch.Tensor, containing text IDs obtained from text_file
-            after tokenization. Use to share text data between Datasets.
+        text_data: torch.Tensor of type torch.long, of shape Nx(L + 1), where
+            N is the number of entities, and L is the maximum sequence length
+            (obtained from tokenizer.max_len). The first element of each row
+            contains the length of each sequence, followed by the token IDs of
+            the respective entity description.
     """
     def __init__(self, triples_file, ents_file=None, rels_file=None,
                  text_data=None, text_file=None,
@@ -138,36 +141,49 @@ class TextGraphDataset(GraphDataset):
                                  ' and tokenizer must be given.')
             else:
                 # Check if a serialized version exists, otherwise create
-                maps = torch.load(self.maps_path)
-                ent_ids = maps['ent_ids']
+                data_path = osp.join(self.out_path, 'text.pt')
+                if not osp.exists(data_path):
+                    maps = torch.load(self.maps_path)
+                    ent_ids = maps['ent_ids']
 
-                # Read descriptions, and build a map from entity ID to text
-                ent2text = dict()
-                text = open(text_file)
-                for line in text:
-                    name_start = line.find(' ')
-                    name_end = line.find(DELIM)
-                    entity = line[:name_start].strip()
-                    # TODO: Tokenize and encode
-                    # description = tokenizer.encode()
-                    ent2text[ent_ids[entity]] = line[name_start:name_end].strip()
+                    # Read descriptions, and build a map from entity ID to text
+                    text = open(text_file)
+                    max_len = tokenizer.max_len
+                    text_data = torch.zeros((len(ent_ids), max_len + 1),
+                                            dtype=torch.long)
+                    for line in text:
+                        name_start = line.find(' ')
+                        name_end = line.find(DELIM)
+                        # For now we will just use the name as the description
+                        text = line[name_start:name_end]
+                        entity = line[:name_start].strip()
 
-                # TODO: store indices in tensor
-                self.text_data = torch.tensor([1, 2, 3])
+                        tokens = tokenizer.encode(text, max_length=max_len,
+                                                  return_tensors='pt')
 
-                # Save tensor for serialization
-        else:
-            self.text_data = text_data
+                        # First cell contains sequence length
+                        length = tokens.shape[1]
+                        text_data[ent_ids[entity], 0] = length
+                        # The rest of the row contains token IDs
+                        text_data[ent_ids[entity], 1:length + 1] = tokens
+
+                    torch.save(text_data, data_path)
+                else:
+                    text_data = torch.load(data_path)
+
+        self.text_data = text_data
 
 
 if __name__ == '__main__':
+    tokenizer = transformers.BertTokenizer.from_pretrained('bert-base-uncased')
     gtr = TextGraphDataset('data/wikifb15k-237/train.txt',
                            ents_file='data/wikifb15k-237/entities.txt',
                            rels_file='data/wikifb15k-237/relations.txt',
-                           text_file='data/wikifb15k-237/descriptions.txt')
+                           text_file='data/wikifb15k-237/descriptions.txt',
+                           tokenizer=tokenizer)
     gva = TextGraphDataset('data/wikifb15k-237/valid.txt',
                            text_data=gtr.text_data)
     gte = TextGraphDataset('data/wikifb15k-237/test.txt',
                            text_data=gtr.text_data)
 
-    print('Done')
+    print([g.text_data.shape for g in (gtr, gva, gte)])
