@@ -188,10 +188,14 @@ class TextGraphDataset(GraphDataset):
         # Truncate batch
         tokens = tokens[:, :, :max_batch_len]
 
+        masks = (tokens > 0).float()
+
         # Recover positive/negative split
         pos_pairs_tokens, neg_pairs_tokens = tokens.split(split, dim=0)
+        pos_pairs_masks, neg_pairs_masks = masks.split(split, dim=0)
 
-        return pos_pairs_tokens, neg_pairs_tokens, rels
+        return (pos_pairs_tokens, pos_pairs_masks,
+                neg_pairs_tokens, neg_pairs_masks, rels)
 
 
 if __name__ == '__main__':

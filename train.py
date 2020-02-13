@@ -3,9 +3,10 @@ from torch.utils.data import DataLoader
 from torch.optim import Adam
 from sacred.run import Run
 from logging import Logger
+from transformers import AlbertTokenizer
 
-from data import GraphDataset
-from graph import TransE
+from data import GraphDataset, TextGraphDataset
+from graph import TransE, BERTransE
 import utils
 
 ex = utils.create_experiment()
@@ -30,7 +31,7 @@ def evaluate(model, loader, epoch, _run: Run, _log: Logger):
     all_ents = torch.arange(end=model.num_entities, device=device).unsqueeze(0)
     for triples in loader:
         triples = triples.to(device)
-        head, rel, tail = torch.chunk(triples, chunks=3, dim=1)
+        head, tail, rel = torch.chunk(triples, chunks=3, dim=1)
 
         # Check all possible heads and tails
         heads_predictions = model.energy(all_ents, tail, rel)
