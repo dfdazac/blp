@@ -64,7 +64,7 @@ class GraphDataset(Dataset):
             triples = []
             for i, line in enumerate(file):
                 head, rel, tail = line.split()
-                triples.append([ent_ids[head], rel_ids[rel], ent_ids[tail]])
+                triples.append([ent_ids[head], ent_ids[tail], rel_ids[rel]])
 
             self.triples = torch.tensor(triples, dtype=torch.long)
             torch.save(self.triples, data_path)
@@ -90,20 +90,20 @@ class GraphDataset(Dataset):
         corrupted triples where either the subject or object are replaced
         by a random entity. Use as a collate_fn for a DataLoader.
         """
-        pos_triples = torch.stack(data_list)
-        num_triples = pos_triples.shape[0]
+        pos_pairs, rels = torch.stack(data_list).split(2, dim=1)
+        num_triples = pos_pairs.shape[0]
 
-        # Randomly swap head (0) or tail (2) for a random entity
-        corrupt_idx = np.random.choice([0, 2], size=num_triples)
+        # Randomly swap head or tail for a random entity
+        corrupt_idx = np.random.choice([0, 1], size=num_triples)
         corrupt_ent = np.random.randint(self.num_ents, size=num_triples)
         corrupt_idx = torch.tensor(corrupt_idx)
         corrupt_ent = torch.tensor(corrupt_ent)
         triple_idx = torch.arange(num_triples)
 
-        neg_triples = pos_triples.clone()
-        neg_triples[triple_idx, corrupt_idx] = corrupt_ent
+        neg_pairs = pos_pairs.clone()
+        neg_pairs[triple_idx, corrupt_idx] = corrupt_ent
 
-        return pos_triples, neg_triples
+        return pos_pairs, neg_pairs, rels
 
 
 class TextGraphDataset(GraphDataset):
@@ -132,9 +132,8 @@ class TextGraphDataset(GraphDataset):
     def __init__(self, triples_file, ents_file=None, rels_file=None,
                  text_data=None, text_file=None,
                  tokenizer: transformers.PreTrainedTokenizer=None):
-        super(TextGraphDataset, self).__init__(triples_file,
-                                               ents_file,
-                                               rels_file)
+        super().__init__(triples_file, ents_file, rels_file)
+
         if text_data is None:
             if text_file is None or tokenizer is None:
                 raise ValueError('If text_data is not provided, both text_file'

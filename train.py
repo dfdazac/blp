@@ -33,8 +33,8 @@ def evaluate(model, loader, epoch, _run: Run, _log: Logger):
         head, rel, tail = torch.chunk(triples, chunks=3, dim=1)
 
         # Check all possible heads and tails
-        heads_predictions = model.energy(all_ents, rel, tail)
-        tails_predictions = model.energy(head, rel, all_ents)
+        heads_predictions = model.energy(all_ents, tail, rel)
+        tails_predictions = model.energy(head, all_ents, rel)
 
         pred_ents = torch.cat((tails_predictions, heads_predictions))
         true_ents = torch.cat((tail, head))
@@ -52,7 +52,9 @@ def evaluate(model, loader, epoch, _run: Run, _log: Logger):
 
 @ex.automain
 def train(dim, lr, margin, p_norm, max_epochs, _run: Run, _log: Logger):
-    train_data = GraphDataset('data/wikifb15k-237/train.txt')
+    train_data = GraphDataset('data/wikifb15k-237/train.txt',
+                              ents_file='data/wikifb15k-237/entities.txt',
+                              rels_file='data/wikifb15k-237/relations.txt')
     train_loader = DataLoader(train_data, batch_size=128, shuffle=True,
                               collate_fn=train_data.negative_sampling,
                               num_workers=4)
@@ -70,8 +72,7 @@ def train(dim, lr, margin, p_norm, max_epochs, _run: Run, _log: Logger):
     for epoch in range(1, max_epochs + 1):
         train_loss = 0
         for step, data in enumerate(train_loader):
-            pos_triples, neg_triples = data
-            loss = model(pos_triples.to(device), neg_triples.to(device))
+            loss = model(*[tensor.to(device) for tensor in data])
 
             optimizer.zero_grad()
             loss.backward()
