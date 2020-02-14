@@ -172,23 +172,40 @@ class TextGraphDataset(GraphDataset):
 
         self.text_data = text_data
 
+    def get_entity_descriptions(self, ent_ids):
+        """Retrieve a batch of sequences (entity descriptions),
+        for each entity in the input.
+
+        Args:
+            ent_ids: torch.Tensor of type torch.Long, of arbitrary shape (*)
+
+        Returns:
+            tokens: torch.Tensor of type torch.Long, of shape (*, L) where L
+                is the maximum sequence length in the batch.
+            masks: torch.Tensor of type torch.Float, of shap (*, L)
+                containing 0 in positions of tokens with padding,
+                and 1 otherwise.
+        """
+        # Convert ent_ids to tensor of token IDs and sequence length
+        # Shape: (*, L + 1), where L is the maximum length sequence
+        data = self.text_data[ent_ids]
+        max_len = data.shape[-1] - 1
+
+        # Separate tokens from lengths
+        tokens, lengths = data.split(max_len, dim=-1)
+        max_batch_len = lengths.max()
+        # Truncate batch
+        tokens = tokens[..., :max_batch_len]
+        masks = (tokens > 0).float()
+
+        return tokens, masks
+
     def negative_sampling(self, data_list):
         pos_pairs, neg_pairs, rels = super().negative_sampling(data_list)
         split = pos_pairs.shape[0]
         pairs = torch.cat((pos_pairs, neg_pairs))
 
-        # Convert pairs to 3D tensor of token IDs and sequence length
-        # Shape: Bx2x(L + 1), where L is the maximum length sequence
-        pairs_data = self.text_data[pairs]
-        max_len = pairs_data.shape[-1] - 1
-
-        # Separate tokens from lengths
-        tokens, lengths = pairs_data.split(max_len, dim=-1)
-        max_batch_len = lengths.max()
-        # Truncate batch
-        tokens = tokens[:, :, :max_batch_len]
-
-        masks = (tokens > 0).float()
+        tokens, masks = self.get_entity_descriptions(pairs)
 
         # Recover positive/negative split
         pos_pairs_tokens, neg_pairs_tokens = tokens.split(split, dim=0)

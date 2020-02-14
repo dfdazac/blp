@@ -14,6 +14,7 @@ class TransE(nn.Module):
         self.p_norm = p_norm
         self.num_entities = num_entities
         self.num_relations = num_relations
+        self.dim = dim
 
         nn.init.kaiming_uniform_(self.ent_emb.weight, nonlinearity='linear')
         nn.init.kaiming_uniform_(self.rel_emb.weight, nonlinearity='linear')
@@ -25,6 +26,9 @@ class TransE(nn.Module):
 
         energy = torch.norm(h + r - t, dim=-1, p=self.p_norm)
         return energy
+
+    def energy_eval(self, head, tail, rel, *args, **kwargs):
+        return self.energy(head, tail, rel)
 
     def forward(self, *data):
         pos_pairs, neg_pairs, rels = data
@@ -42,23 +46,34 @@ class TransE(nn.Module):
 class BERTransE(nn.Module):
     def __init__(self, num_entities, num_relations, dim, margin=1, p_norm=2):
         super().__init__()
-        self.ent_emb = Albert.from_pretrained('albert-base-v2', num_labels=dim,
-                                              output_attentions=False,
-                                              output_hidden_states=False)
+        self.bert = Albert.from_pretrained('albert-base-v2', num_labels=dim,
+                                           output_attentions=False,
+                                           output_hidden_states=False)
         self.rel_emb = nn.Embedding(num_relations, dim)
 
         self.margin = margin
         self.p_norm = p_norm
         self.num_entities = num_entities
         self.num_relations = num_relations
+        self.dim = dim
 
         nn.init.kaiming_uniform_(self.rel_emb.weight, nonlinearity='linear')
 
+    def ent_emb(self, tokens, masks):
+        return F.normalize(self.bert(tokens, masks)[0], dim=-1)
+
     def energy(self, head, tail, head_mask, tail_mask, rel):
-        # TODO: normalize embeddings?
-        h = self.ent_emb(head.squeeze(), head_mask.squeeze())[0]
-        r = F.normalize(self.rel_emb(rel.squeeze()), dim=-1)
-        t = self.ent_emb(tail.squeeze(), tail_mask.squeeze())[0]
+        h = self.ent_emb(head, head_mask)
+        r = F.normalize(self.rel_emb(rel), dim=-1)
+        t = self.ent_emb(tail, tail_mask)
+
+        energy = torch.norm(h + r - t, dim=-1, p=self.p_norm)
+        return energy
+
+    def energy_eval(self, head, tail, rel, ent_emb):
+        h = ent_emb[head]
+        r = F.normalize(self.rel_emb(rel), dim=-1)
+        t = ent_emb[tail]
 
         energy = torch.norm(h + r - t, dim=-1, p=self.p_norm)
         return energy
@@ -67,12 +82,17 @@ class BERTransE(nn.Module):
         (pos_pairs_tokens, pos_pairs_masks,
          neg_pairs_tokens, neg_pairs_masks, rels) = data
 
-        pos_energy = self.energy(*torch.chunk(pos_pairs_tokens, 2, dim=1),
-                                 *torch.chunk(pos_pairs_masks, 2, dim=1),
-                                 rels)
-        neg_energy = self.energy(*torch.chunk(neg_pairs_tokens, 2, dim=1),
-                                 *torch.chunk(neg_pairs_masks, 2, dim=1),
-                                 rels)
+        pos_energy = self.energy(head=pos_pairs_tokens[:, 0],
+                                 tail=pos_pairs_tokens[:, 1],
+                                 head_mask=pos_pairs_masks[:, 0],
+                                 tail_mask=pos_pairs_masks[:, 1],
+                                 rel=rels.squeeze())
+
+        neg_energy = self.energy(head=neg_pairs_tokens[:, 0],
+                                 tail=neg_pairs_tokens[:, 1],
+                                 head_mask=neg_pairs_masks[:, 0],
+                                 tail_mask=neg_pairs_masks[:, 1],
+                                 rel=rels.squeeze())
 
         loss = self.margin + pos_energy - neg_energy
         loss[loss < 0] = 0
