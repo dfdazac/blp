@@ -3,7 +3,7 @@ from torch.utils.data import DataLoader
 from torch.optim import Adam
 from sacred.run import Run
 from logging import Logger
-from transformers import AlbertTokenizer, AdamW
+from transformers import AlbertTokenizer, get_linear_schedule_with_warmup
 
 from data import GraphDataset, TextGraphDataset
 from graph import TransE, BERTransE
@@ -16,10 +16,10 @@ device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 @ex.config
 def config():
     dim = 100
-    lr = 1e-2
-    margin = 1
+    lr = 2e-5
+    margin = 5
     p_norm = 1
-    max_epochs = 600
+    max_epochs = 4
 
 
 @ex.capture
@@ -44,7 +44,7 @@ def evaluate(model, loader, epoch, _run: Run, _log: Logger):
             # Get their corresponding descriptions
             tokens, masks = loader.dataset.get_entity_descriptions(batch_ents)
             # Encode with BERT and store result
-            batch_emb = model.ent_emb(tokens, masks)[0]
+            batch_emb = model.ent_emb(tokens.to(device), masks.to(device))[0]
             ent_emb[idx:idx + loader.batch_size] = batch_emb
             idx += loader.batch_size
 
@@ -96,7 +96,13 @@ def train(dim, lr, margin, p_norm, max_epochs, _run: Run, _log: Logger):
 
     model = BERTransE(train_data.num_ents, train_data.num_rels, dim=dim,
                       margin=margin, p_norm=p_norm).to(device)
+    
     optimizer = Adam(model.parameters(), lr)
+    total_steps = len(train_loader) * max_epochs
+    warmup = int(0.2 * total_steps)
+    scheduler = get_linear_schedule_with_warmup(optimizer,
+                                                num_warmup_steps=warmup,
+                                                num_training_steps=total_steps)
 
     for epoch in range(1, max_epochs + 1):
         train_loss = 0
@@ -106,6 +112,7 @@ def train(dim, lr, margin, p_norm, max_epochs, _run: Run, _log: Logger):
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
+            scheduler.step()
 
             train_loss += loss.item()
 
