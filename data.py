@@ -146,11 +146,11 @@ class TextGraphDataset(GraphDataset):
                     ent_ids = maps['ent_ids']
 
                     # Read descriptions, and build a map from entity ID to text
-                    text = open(text_file)
+                    text_lines = open(text_file)
                     max_len = tokenizer.max_len
                     text_data = torch.zeros((len(ent_ids), max_len + 1),
                                             dtype=torch.long)
-                    for line in text:
+                    for line in text_lines:
                         name_start = line.find(' ')
                         name_end = line.find(DELIM)
                         # For now we will just use the name as the description

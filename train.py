@@ -3,6 +3,7 @@ from torch.utils.data import DataLoader
 from torch.optim import Adam
 from sacred.run import Run
 from logging import Logger
+from itertools import chain
 from transformers import AlbertTokenizer, get_linear_schedule_with_warmup
 
 from data import GraphDataset, TextGraphDataset
@@ -19,12 +20,13 @@ def config():
     lr = 2e-5
     margin = 5
     p_norm = 1
-    max_epochs = 4
+    max_epochs = 15
 
 
 @ex.capture
 @torch.no_grad()
-def evaluate(model, loader, epoch, _run: Run, _log: Logger):
+def evaluate(model, loader, epoch, _run: Run, _log: Logger,
+             prefix='', max_num_batches=None):
     hits = 0.0
     mrr = 0.0
 
@@ -52,7 +54,11 @@ def evaluate(model, loader, epoch, _run: Run, _log: Logger):
     else:
         ent_emb = None
 
-    for triples in loader:
+    batch_count = 0
+    for i, triples in enumerate(loader):
+        if max_num_batches is not None and i == max_num_batches:
+            break
+
         triples = triples.to(device)
         head, tail, rel = torch.chunk(triples, chunks=3, dim=1)
 
@@ -65,13 +71,14 @@ def evaluate(model, loader, epoch, _run: Run, _log: Logger):
 
         hits += utils.hit_at_k(pred_ents, true_ents, k=10)
         mrr += utils.mrr(pred_ents, true_ents)
+        batch_count += 1
 
-    hits = hits / len(loader)
-    mrr = mrr / len(loader)
+    hits = hits / batch_count
+    mrr = mrr / batch_count
 
-    _log.info(f'mrr: {mrr:.4f}  hits@10: {hits:.4f}')
-    _run.log_scalar('valid_mrr', mrr, epoch)
-    _run.log_scalar('valid_hits@10', hits, epoch)
+    _log.info(f'{prefix} mrr: {mrr:.4f}  hits@10: {hits:.4f}')
+    _run.log_scalar(f'{prefix}_valid_mrr', mrr, epoch)
+    _run.log_scalar(f'{prefix}_valid_hits@10', hits, epoch)
 
 
 @ex.automain
@@ -86,6 +93,8 @@ def train(dim, lr, margin, p_norm, max_epochs, _run: Run, _log: Logger):
                               collate_fn=train_data.negative_sampling,
                               num_workers=4)
 
+    train_eval_loader = DataLoader(train_data, batch_size=128, shuffle=True)
+
     valid_data = TextGraphDataset('data/wikifb15k-237/valid.txt',
                                   text_data=train_data.text_data)
     valid_loader = DataLoader(valid_data, batch_size=128)
@@ -97,7 +106,11 @@ def train(dim, lr, margin, p_norm, max_epochs, _run: Run, _log: Logger):
     model = BERTransE(train_data.num_ents, train_data.num_rels, dim=dim,
                       margin=margin, p_norm=p_norm).to(device)
     
-    optimizer = Adam(model.parameters(), lr)
+    optimizer = Adam(model.bert.albert.parameters(), lr)
+
+    rel_optim = Adam(chain(model.bert.classifier.parameters(),
+                           model.rel_emb.parameters()),
+                     1e-3)
     total_steps = len(train_loader) * max_epochs
     warmup = int(0.2 * total_steps)
     scheduler = get_linear_schedule_with_warmup(optimizer,
@@ -110,8 +123,10 @@ def train(dim, lr, margin, p_norm, max_epochs, _run: Run, _log: Logger):
             loss = model(*[tensor.to(device) for tensor in data])
 
             optimizer.zero_grad()
+            rel_optim.zero_grad()
             loss.backward()
             optimizer.step()
+            rel_optim.step()
             scheduler.step()
 
             train_loss += loss.item()
@@ -122,8 +137,13 @@ def train(dim, lr, margin, p_norm, max_epochs, _run: Run, _log: Logger):
                 _run.log_scalar('batch_loss', loss.item())
 
         _run.log_scalar('train_loss', train_loss/len(train_loader), epoch)
+
+        _log.info('Evaluating on random sample of training set...')
+        evaluate(model, train_eval_loader, epoch, prefix='train',
+                 max_num_batches=len(valid_loader))
+
         _log.info('Evaluating on validation set...')
-        evaluate(model, valid_loader, epoch)
+        evaluate(model, valid_loader, epoch, prefix='valid')
 
     _log.info('Evaluating on test set...')
-    evaluate(model, test_loader, max_epochs)
+    evaluate(model, test_loader, max_epochs, prefix='test')

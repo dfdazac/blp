@@ -48,7 +48,8 @@ class BERTransE(nn.Module):
         super().__init__()
         self.bert = Albert.from_pretrained('albert-base-v2', num_labels=dim,
                                            output_attentions=False,
-                                           output_hidden_states=False)
+                                           output_hidden_states=False,
+                                           classifier_dropout_prob=0)
         self.rel_emb = nn.Embedding(num_relations, dim)
 
         self.margin = margin
