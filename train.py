@@ -3,7 +3,6 @@ from torch.utils.data import DataLoader
 from torch.optim import Adam
 from sacred.run import Run
 from logging import Logger
-from itertools import chain
 from transformers import AlbertTokenizer, get_linear_schedule_with_warmup
 
 from data import GraphDataset, TextGraphDataset
