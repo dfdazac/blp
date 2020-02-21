@@ -46,7 +46,7 @@ def evaluate(model, loader, epoch, _run: Run, _log: Logger,
             # Get their corresponding descriptions
             tokens, masks = loader.dataset.get_entity_descriptions(batch_ents)
             # Encode with BERT and store result
-            batch_emb = model.ent_emb(tokens.to(device), masks.to(device))[0]
+            batch_emb = model.ent_emb(tokens.to(device), masks.to(device))
             ent_emb[idx:idx + loader.batch_size] = batch_emb
             idx += loader.batch_size
 
@@ -84,7 +84,7 @@ def evaluate(model, loader, epoch, _run: Run, _log: Logger,
 @ex.automain
 def train(dim, lr, margin, p_norm, max_epochs, _run: Run, _log: Logger):
     tokenizer = AlbertTokenizer.from_pretrained('albert-base-v2')
-    train_data = TextGraphDataset('data/wikifb15k-237/train.txt',
+    train_data = TextGraphDataset(triples_file='data/wikifb15k-237/train.txt',
                                   ents_file='data/wikifb15k-237/entities.txt',
                                   rels_file='data/wikifb15k-237/relations.txt',
                                   text_file='data/wikifb15k-237/descriptions.txt',
@@ -92,8 +92,7 @@ def train(dim, lr, margin, p_norm, max_epochs, _run: Run, _log: Logger):
     train_loader = DataLoader(train_data, batch_size=32, shuffle=True,
                               collate_fn=train_data.negative_sampling,
                               num_workers=4)
-
-    train_eval_loader = DataLoader(train_data, batch_size=128, shuffle=True)
+    train_eval_loader = DataLoader(train_data, batch_size=128)
 
     valid_data = TextGraphDataset('data/wikifb15k-237/valid.txt',
                                   text_data=train_data.text_data)
@@ -105,12 +104,12 @@ def train(dim, lr, margin, p_norm, max_epochs, _run: Run, _log: Logger):
 
     model = BERTransE(train_data.num_ents, train_data.num_rels, dim=dim,
                       margin=margin, p_norm=p_norm).to(device)
-    
-    optimizer = Adam(model.bert.albert.parameters(), lr)
 
-    rel_optim = Adam(chain(model.bert.classifier.parameters(),
-                           model.rel_emb.parameters()),
-                     1e-3)
+    optimizer = Adam([{'params': model.bert.albert.parameters(), 'lr': lr},
+                      {'params': model.bert.classifier.parameters()},
+                      {'params': model.rel_emb.parameters()}],
+                     lr=1e-4)
+
     total_steps = len(train_loader) * max_epochs
     warmup = int(0.2 * total_steps)
     scheduler = get_linear_schedule_with_warmup(optimizer,
@@ -123,10 +122,8 @@ def train(dim, lr, margin, p_norm, max_epochs, _run: Run, _log: Logger):
             loss = model(*[tensor.to(device) for tensor in data])
 
             optimizer.zero_grad()
-            rel_optim.zero_grad()
             loss.backward()
             optimizer.step()
-            rel_optim.step()
             scheduler.step()
 
             train_loss += loss.item()
@@ -138,7 +135,7 @@ def train(dim, lr, margin, p_norm, max_epochs, _run: Run, _log: Logger):
 
         _run.log_scalar('train_loss', train_loss/len(train_loader), epoch)
 
-        _log.info('Evaluating on random sample of training set...')
+        _log.info('Evaluating on sample of training set...')
         evaluate(model, train_eval_loader, epoch, prefix='train',
                  max_num_batches=len(valid_loader))
 
