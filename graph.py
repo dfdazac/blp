@@ -99,3 +99,36 @@ class BERTransE(nn.Module):
         loss[loss < 0] = 0
 
         return loss.mean()
+
+
+class RelTransE(nn.Module):
+    def __init__(self, num_relations, dim, margin=1, p_norm=2):
+        super().__init__()
+        self.rel_emb = nn.Embedding(num_relations, dim)
+
+        self.margin = margin
+        self.p_norm = p_norm
+        self.num_relations = num_relations
+        self.dim = dim
+
+        nn.init.kaiming_uniform_(self.rel_emb.weight, nonlinearity='linear')
+
+    def energy(self, head, tail, rel, ent_emb):
+        h = F.normalize(ent_emb[head], dim=-1)
+        r = F.normalize(self.rel_emb(rel), dim=-1)
+        t = F.normalize(ent_emb[tail], dim=-1)
+
+        energy = torch.norm(h + r - t, dim=-1, p=self.p_norm)
+        return energy
+
+    def forward(self, *data):
+        pos_pairs, neg_pairs, rels, ent_embs = data
+        pos_energy = self.energy(*torch.chunk(pos_pairs, chunks=2, dim=1),
+                                 rels, ent_embs)
+        neg_energy = self.energy(*torch.chunk(neg_pairs, chunks=2, dim=1),
+                                 rels, ent_embs)
+
+        loss = self.margin + pos_energy - neg_energy
+        loss[loss < 0] = 0
+
+        return loss.mean()
