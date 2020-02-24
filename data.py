@@ -214,6 +214,9 @@ class TextGraphDataset(GraphDataset):
         return (pos_pairs_tokens, pos_pairs_masks,
                 neg_pairs_tokens, neg_pairs_masks, rels)
 
+    def graph_negative_sampling(self, data_list):
+        return super().negative_sampling(data_list)
+
 
 if __name__ == '__main__':
     tokenizer = transformers.BertTokenizer.from_pretrained('bert-base-uncased')
