@@ -17,6 +17,10 @@ class SummaryModel(nn.Module):
 
     def forward(self, *data):
         tokens, masks = data
+
+        # TODO: Consider other representations, such as mean or max
+        #   pooling of hidden states
+
         return self.encoder(tokens, masks)[1]
 
 

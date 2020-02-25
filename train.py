@@ -147,24 +147,28 @@ def link_prediction(dim, lr, margin, p_norm, max_epochs,
     eval_link_prediction(model, test_loader, max_epochs, prefix='test')
 
 
-def get_entity_summaries(dataset):
+@ex.capture
+def get_entity_summaries(dataset, _run: Run, _log: Logger):
     """Load pretrained entity summaries"""
-    summarizer = SummaryModel()
+    summarizer = SummaryModel().to(device)
     emb_dim = summarizer.encoder.config.hidden_size
     load_num = 256
 
     all_ents = torch.arange(dataset.num_ents)
-    ent_summaries = torch.empty((dataset.num_ents, emb_dim))
+    ent_summaries = torch.empty((dataset.num_ents, emb_dim)).to(device)
 
-    # FIXME
-    # for i in range(0, dataset.num_ents, load_num):
-    #     # Get a batch of entity IDs
-    #     batch_ents = all_ents[i:i + load_num]
-    #     # Get their corresponding descriptions
-    #     tokens, masks = dataset.get_entity_descriptions(batch_ents)
-    #     # Encode with BERT and store result
-    #     batch_emb = summarizer(tokens.to(device), masks.to(device))
-    #     ent_summaries[i:i + load_num] = batch_emb
+    _log.info('Loading pretrained entity summaries...')
+    for i in range(0, dataset.num_ents, load_num):
+        # Get a batch of entity IDs
+        batch_ents = all_ents[i:i + load_num]
+        # Get their corresponding descriptions
+        tokens, masks = dataset.get_entity_descriptions(batch_ents)
+        # Encode with BERT and store result
+        batch_emb = summarizer(tokens.to(device), masks.to(device))
+        ent_summaries[i:i + load_num] = batch_emb
+
+        if i % 100:
+            _log.info(f'[{i + 1}/{dataset.num_ents}]')
 
     return ent_summaries
 
@@ -182,7 +186,7 @@ def train_linker(lr, margin, p_norm, _run: Run, _log: Logger):
                         collate_fn=dataset.graph_negative_sampling,
                         num_workers=4)
 
-    summaries = get_entity_summaries(dataset).to(device)
+    summaries = get_entity_summaries(dataset)
 
     aligner = EntityAligner().to(device)
     graph_model = RelTransE(dataset.num_rels, aligner.dim, margin, p_norm)
@@ -199,16 +203,28 @@ def train_linker(lr, margin, p_norm, _run: Run, _log: Logger):
         # Use alignment model to obtain entity embeddings
         ent_embs = aligner(tokens, mask, summaries)
 
-        # Run 1 epoch of TransE
-        for j, data in enumerate(loader):
+        # Run 1 epoch of TransE, accumulating gradients
+        train_loss = 0
+        for step, data in enumerate(loader):
             # TODO: check gradient scaling
             loss = graph_model(*[tensor.to(device) for tensor in data],
                                ent_embs)
 
             loss.backward(retain_graph=True)
-            if j % 100 == 0:
-                print(f'{j}/{len(loader)}  {loss.item()}')
 
+            train_loss += loss.item()
+
+            if step % 200 == 0:
+                _log.info(f'Entity {i + 1}/{dataset.num_ents} '
+                          f'[{step}/{len(loader)}]: {loss.item():.6f}')
+                _run.log_scalar('batch_loss', loss.item())
+
+        optimizer.step()
+        optimizer.zero_grad()
+
+        _run.log_scalar('train_loss', train_loss / len(loader), i)
+
+        # Check gradient health
         min_grad_all = float('inf')
         max_grad_all = -float('inf')
 
@@ -226,7 +242,5 @@ def train_linker(lr, margin, p_norm, _run: Run, _log: Logger):
                 if max_grad >= max_grad_all:
                     max_grad_all = max_grad
 
-        print(f'min_grad: {min_grad_all:.6f}  max_grad: {max_grad_all:.6f}')
-
-        optimizer.step()
-        optimizer.zero_grad()
+        _run.log_scalar('min_grad', min_grad_all)
+        _run.log_scalar('max_grad', max_grad_all)
