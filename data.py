@@ -153,11 +153,15 @@ class TextGraphDataset(GraphDataset):
                     for line in text_lines:
                         name_start = line.find(' ')
                         name_end = line.find(DELIM)
-                        # For now we will just use the name as the description
-                        text = line[name_start:name_end]
+
+                        name = line[name_start:name_end].strip()
+                        text = line[name_end + len(DELIM):].strip()
+                        description = f'{name}: {text}'
+
                         entity = line[:name_start].strip()
 
-                        tokens = tokenizer.encode(text, max_length=max_len,
+                        tokens = tokenizer.encode(description,
+                                                  max_length=max_len,
                                                   return_tensors='pt')
 
                         length = tokens.shape[1]
