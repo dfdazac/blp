@@ -137,3 +137,6 @@ data/
 
 # vim files
 *.swp
+
+# PyTorch tensors
+*.pt
