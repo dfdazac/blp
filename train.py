@@ -225,8 +225,6 @@ def train_linker(lr, margin, p_norm, _run: Run, _log: Logger):
                           f'[{step}/{len(loader)}]: {loss.item():.6f}')
                 _run.log_scalar('batch_loss', loss.item())
 
-            break
-
         # Check gradient health
         min_grad_all = float('inf')
         max_grad_all = -float('inf')
@@ -259,3 +257,6 @@ def train_linker(lr, margin, p_norm, _run: Run, _log: Logger):
 
         torch.save(graph_model.state_dict(),
                    osp.join(OUT_PATH, f'transe-{_run._id}.pt'))
+
+        if i == 500:
+            break
