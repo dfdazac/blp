@@ -1,3 +1,4 @@
+import os.path as osp
 import torch
 from torch.utils.data import DataLoader
 from torch.optim import Adam
@@ -9,6 +10,8 @@ from data import GraphDataset, TextGraphDataset
 from graph import TransE, BERTransE, RelTransE
 from text import SummaryModel, EntityAligner
 import utils
+
+OUT_PATH = 'output/'
 
 ex = utils.create_experiment()
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -152,23 +155,25 @@ def get_entity_summaries(dataset, _run: Run, _log: Logger):
     """Load pretrained entity summaries"""
     summarizer = SummaryModel().to(device)
     emb_dim = summarizer.encoder.config.hidden_size
-    load_num = 256
+    batch_size = 256
 
     all_ents = torch.arange(dataset.num_ents)
-    ent_summaries = torch.empty((dataset.num_ents, emb_dim)).to(device)
+    ent_summaries = torch.randn((dataset.num_ents, emb_dim)).to(device)
 
     _log.info('Loading pretrained entity summaries...')
-    for i in range(0, dataset.num_ents, load_num):
+    for i in range(0, dataset.num_ents, batch_size):
         # Get a batch of entity IDs
-        batch_ents = all_ents[i:i + load_num]
+        batch_ents = all_ents[i:i + batch_size]
         # Get their corresponding descriptions
         tokens, masks = dataset.get_entity_descriptions(batch_ents)
         # Encode with BERT and store result
         batch_emb = summarizer(tokens.to(device), masks.to(device))
-        ent_summaries[i:i + load_num] = batch_emb
+        ent_summaries[i:i + batch_size] = batch_emb
 
         if i % 100:
             _log.info(f'[{i + 1}/{dataset.num_ents}]')
+
+    torch.save(ent_summaries, osp.join(OUT_PATH, f'summaries-{_run._id}.pt'))
 
     return ent_summaries
 
@@ -189,7 +194,9 @@ def train_linker(lr, margin, p_norm, _run: Run, _log: Logger):
     summaries = get_entity_summaries(dataset)
 
     aligner = EntityAligner().to(device)
-    graph_model = RelTransE(dataset.num_rels, aligner.dim, margin, p_norm)
+    graph_model = RelTransE(dataset.num_rels, aligner.dim,
+                            margin, p_norm).to(device)
+
     optimizer = Adam([{'params': aligner.parameters()},
                       {'params': graph_model.parameters()}], lr=1e-5)
 
@@ -206,7 +213,6 @@ def train_linker(lr, margin, p_norm, _run: Run, _log: Logger):
         # Run 1 epoch of TransE, accumulating gradients
         train_loss = 0
         for step, data in enumerate(loader):
-            # TODO: check gradient scaling
             loss = graph_model(*[tensor.to(device) for tensor in data],
                                ent_embs)
 
@@ -219,10 +225,7 @@ def train_linker(lr, margin, p_norm, _run: Run, _log: Logger):
                           f'[{step}/{len(loader)}]: {loss.item():.6f}')
                 _run.log_scalar('batch_loss', loss.item())
 
-        optimizer.step()
-        optimizer.zero_grad()
-
-        _run.log_scalar('train_loss', train_loss / len(loader), i)
+            break
 
         # Check gradient health
         min_grad_all = float('inf')
@@ -242,5 +245,17 @@ def train_linker(lr, margin, p_norm, _run: Run, _log: Logger):
                 if max_grad >= max_grad_all:
                     max_grad_all = max_grad
 
+        optimizer.step()
+        optimizer.zero_grad()
+
+        _run.log_scalar('train_loss', train_loss / len(loader), i)
+
         _run.log_scalar('min_grad', min_grad_all)
         _run.log_scalar('max_grad', max_grad_all)
+
+        # Save parameters
+        torch.save(aligner.state_dict(),
+                   osp.join(OUT_PATH, f'aligner-{_run._id}.pt'))
+
+        torch.save(graph_model.state_dict(),
+                   osp.join(OUT_PATH, f'transe-{_run._id}.pt'))
