@@ -158,7 +158,7 @@ def get_entity_summaries(dataset, _run: Run, _log: Logger):
     batch_size = 256
 
     all_ents = torch.arange(dataset.num_ents)
-    ent_summaries = torch.randn((dataset.num_ents, emb_dim)).to(device)
+    ent_summaries = torch.zeros((dataset.num_ents, emb_dim)).to(device)
 
     _log.info('Loading pretrained entity summaries...')
     for i in range(0, dataset.num_ents, batch_size):
@@ -170,7 +170,7 @@ def get_entity_summaries(dataset, _run: Run, _log: Logger):
         batch_emb = summarizer(tokens.to(device), masks.to(device))
         ent_summaries[i:i + batch_size] = batch_emb
 
-        if i % 100:
+        if i % batch_size == 0:
             _log.info(f'[{i + 1}/{dataset.num_ents}]')
 
     torch.save(ent_summaries, osp.join(OUT_PATH, f'summaries-{_run._id}.pt'))
@@ -179,7 +179,7 @@ def get_entity_summaries(dataset, _run: Run, _log: Logger):
 
 
 @ex.automain
-def train_linker(lr, margin, p_norm, _run: Run, _log: Logger):
+def train_linker(lr, margin, p_norm, max_epochs, _run: Run, _log: Logger):
     tokenizer = AlbertTokenizer.from_pretrained('albert-base-v2')
     dataset = TextGraphDataset(triples_file='data/wikifb15k-237/train.txt',
                                ents_file='data/wikifb15k-237/entities.txt',
@@ -200,7 +200,12 @@ def train_linker(lr, margin, p_norm, _run: Run, _log: Logger):
     optimizer = Adam([{'params': aligner.parameters()},
                       {'params': graph_model.parameters()}], lr=1e-5)
 
-    for i in range(dataset.num_ents):
+    warmup = int(0.2 * max_epochs)
+    scheduler = get_linear_schedule_with_warmup(optimizer,
+                                                num_warmup_steps=warmup,
+                                                num_training_steps=max_epochs)
+
+    for i in range(max_epochs):
         # Get entity description
         ent_id = torch.tensor([i], dtype=torch.long)
         tokens, mask = dataset.get_entity_descriptions(ent_id)
@@ -244,6 +249,7 @@ def train_linker(lr, margin, p_norm, _run: Run, _log: Logger):
                     max_grad_all = max_grad
 
         optimizer.step()
+        scheduler.step()
         optimizer.zero_grad()
 
         _run.log_scalar('train_loss', train_loss / len(loader), i)
@@ -257,6 +263,3 @@ def train_linker(lr, margin, p_norm, _run: Run, _log: Logger):
 
         torch.save(graph_model.state_dict(),
                    osp.join(OUT_PATH, f'transe-{_run._id}.pt'))
-
-        if i == 500:
-            break

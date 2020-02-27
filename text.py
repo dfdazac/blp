@@ -21,7 +21,10 @@ class SummaryModel(nn.Module):
         # TODO: Consider other representations, such as mean or max
         #   pooling of hidden states
 
-        return self.encoder(tokens, masks)[1]
+        token_emb = self.encoder(tokens, masks)[0]
+
+        # Return state for CLS token
+        return token_emb[:, 0]
 
 
 class EntityAligner(nn.Module):
@@ -49,4 +52,4 @@ class EntityAligner(nn.Module):
         # word representations
         ent_embs = torch.matmul(alignments.transpose(1, 2), token_emb)
 
-        return ent_embs.squeeze()
+        return ent_embs.squeeze(), alignments.squeeze()
