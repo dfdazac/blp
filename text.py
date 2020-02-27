@@ -5,9 +5,19 @@ from transformers import AlbertModel as Albert
 
 
 class SummaryModel(nn.Module):
-    def __init__(self):
+    pool_first = 'first'
+    pool_mean = 'mean'
+    pool_max = 'max'
+    pooling_strategies = {pool_first, pool_mean, pool_max}
+
+    def __init__(self, pooling):
         super().__init__()
 
+        if pooling not in SummaryModel.pooling_strategies:
+            raise ValueError(f'{pooling} '
+                             f'not in {self.pooling_strategies}')
+
+        self.pooling = pooling
         self.encoder = Albert.from_pretrained('albert-base-v2',
                                               output_attentions=False,
                                               output_hidden_states=False)
@@ -17,14 +27,16 @@ class SummaryModel(nn.Module):
 
     def forward(self, *data):
         tokens, masks = data
-
-        # TODO: Consider other representations, such as mean or max
-        #   pooling of hidden states
-
         token_emb = self.encoder(tokens, masks)[0]
 
-        # Return state for CLS token
-        return token_emb[:, 0]
+        if self.pooling == self.pool_first:
+            summary = token_emb[:, 0]
+        elif self.pooling == self.pool_mean:
+            summary = torch.mean(token_emb, dim=1)
+        elif self.pooling == self.pool_max:
+            summary, _ = torch.max(token_emb, dim=1)
+
+        return summary
 
 
 class EntityAligner(nn.Module):

@@ -20,10 +20,11 @@ device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 @ex.config
 def config():
     dim = 100
-    lr = 2e-5
+    lr = 1e-5
     margin = 5
     p_norm = 1
-    max_epochs = 15
+    max_epochs = 500
+    pooling = 'max'
 
 
 @ex.capture
@@ -151,11 +152,11 @@ def link_prediction(dim, lr, margin, p_norm, max_epochs,
 
 
 @ex.capture
-def get_entity_summaries(dataset, _run: Run, _log: Logger):
+def get_entity_summaries(dataset, pooling, _run: Run, _log: Logger):
     """Load pretrained entity summaries"""
-    summarizer = SummaryModel().to(device)
+    summarizer = SummaryModel(pooling).to(device)
     emb_dim = summarizer.encoder.config.hidden_size
-    batch_size = 256
+    batch_size = 1  # FIXME
 
     all_ents = torch.arange(dataset.num_ents)
     ent_summaries = torch.zeros((dataset.num_ents, emb_dim)).to(device)
@@ -179,7 +180,9 @@ def get_entity_summaries(dataset, _run: Run, _log: Logger):
 
 
 @ex.automain
-def train_linker(lr, margin, p_norm, max_epochs, _run: Run, _log: Logger):
+def train_linker(lr, margin, p_norm, max_epochs, pooling,
+                 _run: Run, _log: Logger):
+
     tokenizer = AlbertTokenizer.from_pretrained('albert-base-v2')
     dataset = TextGraphDataset(triples_file='data/wikifb15k-237/train.txt',
                                ents_file='data/wikifb15k-237/entities.txt',
@@ -191,14 +194,14 @@ def train_linker(lr, margin, p_norm, max_epochs, _run: Run, _log: Logger):
                         collate_fn=dataset.graph_negative_sampling,
                         num_workers=4)
 
-    summaries = get_entity_summaries(dataset)
+    summaries = get_entity_summaries(dataset, pooling)
 
     aligner = EntityAligner().to(device)
     graph_model = RelTransE(dataset.num_rels, aligner.dim,
                             margin, p_norm).to(device)
 
     optimizer = Adam([{'params': aligner.parameters()},
-                      {'params': graph_model.parameters()}], lr=1e-5)
+                      {'params': graph_model.parameters()}], lr=lr)
 
     warmup = int(0.2 * max_epochs)
     scheduler = get_linear_schedule_with_warmup(optimizer,
