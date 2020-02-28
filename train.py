@@ -24,7 +24,7 @@ def config():
     margin = 5
     p_norm = 1
     max_epochs = 500
-    pooling = 'max'
+    pooling = 'mean'
 
 
 @ex.capture
@@ -100,11 +100,11 @@ def link_prediction(dim, lr, margin, p_norm, max_epochs,
     train_eval_loader = DataLoader(dataset, batch_size=128)
 
     valid_data = TextGraphDataset('data/wikifb15k-237/valid.txt',
-                                  text_data=dataset.text_data)
+                                  desc_data=dataset.desc_data)
     valid_loader = DataLoader(valid_data, batch_size=128)
 
     test_data = TextGraphDataset('data/wikifb15k-237/test.txt',
-                                 text_data=dataset.text_data)
+                                 desc_data=dataset.desc_data)
     test_loader = DataLoader(test_data, batch_size=128)
 
     model = BERTransE(dataset.num_ents, dataset.num_rels, dim=dim,
@@ -156,7 +156,7 @@ def get_entity_summaries(dataset, pooling, _run: Run, _log: Logger):
     """Load pretrained entity summaries"""
     summarizer = SummaryModel(pooling).to(device)
     emb_dim = summarizer.encoder.config.hidden_size
-    batch_size = 1  # FIXME
+    batch_size = 256
 
     all_ents = torch.arange(dataset.num_ents)
     ent_summaries = torch.zeros((dataset.num_ents, emb_dim)).to(device)
@@ -166,7 +166,8 @@ def get_entity_summaries(dataset, pooling, _run: Run, _log: Logger):
         # Get a batch of entity IDs
         batch_ents = all_ents[i:i + batch_size]
         # Get their corresponding descriptions
-        tokens, masks = dataset.get_entity_descriptions(batch_ents)
+        tokens, masks = dataset.get_entity_descriptions(batch_ents,
+                                                        name_only=True)
         # Encode with BERT and store result
         batch_emb = summarizer(tokens.to(device), masks.to(device))
         ent_summaries[i:i + batch_size] = batch_emb
@@ -180,8 +181,8 @@ def get_entity_summaries(dataset, pooling, _run: Run, _log: Logger):
 
 
 @ex.automain
-def train_linker(lr, margin, p_norm, max_epochs, pooling,
-                 _run: Run, _log: Logger):
+def train_align(lr, margin, p_norm, max_epochs, pooling,
+                _run: Run, _log: Logger):
 
     tokenizer = AlbertTokenizer.from_pretrained('albert-base-v2')
     dataset = TextGraphDataset(triples_file='data/wikifb15k-237/train.txt',
@@ -233,6 +234,8 @@ def train_linker(lr, margin, p_norm, max_epochs, pooling,
                           f'[{step}/{len(loader)}]: {loss.item():.6f}')
                 _run.log_scalar('batch_loss', loss.item())
 
+        _run.log_scalar('train_loss', train_loss / len(loader), i)
+
         # Check gradient health
         min_grad_all = float('inf')
         max_grad_all = -float('inf')
@@ -251,14 +254,12 @@ def train_linker(lr, margin, p_norm, max_epochs, pooling,
                 if max_grad >= max_grad_all:
                     max_grad_all = max_grad
 
+        _run.log_scalar('min_grad', min_grad_all)
+        _run.log_scalar('max_grad', max_grad_all)
+
         optimizer.step()
         scheduler.step()
         optimizer.zero_grad()
-
-        _run.log_scalar('train_loss', train_loss / len(loader), i)
-
-        _run.log_scalar('min_grad', min_grad_all)
-        _run.log_scalar('max_grad', max_grad_all)
 
         # Save parameters
         torch.save(aligner.state_dict(),

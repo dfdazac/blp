@@ -123,21 +123,21 @@ class TextGraphDataset(GraphDataset):
             Assumes one description per line for each entity, starting with
             the entity ID, followed by its description.
         tokenizer: transformers.PreTrainedTokenizer
-        text_data: torch.Tensor of type torch.long, of shape Nx(L + 1), where
+        desc_data: torch.Tensor of type torch.long, of shape Nx(L + 1), where
             N is the number of entities, and L is the maximum sequence length
             (obtained from tokenizer.max_len). The first element of each row
             contains the length of each sequence, followed by the token IDs of
             the respective entity description.
     """
     def __init__(self, triples_file, ents_file=None, rels_file=None,
-                 text_data=None, text_file=None,
+                 name_data=None, desc_data=None, text_file=None,
                  tokenizer: transformers.PreTrainedTokenizer=None):
         super().__init__(triples_file, ents_file, rels_file)
 
-        if text_data is None:
+        if name_data is None or desc_data is None:
             if text_file is None or tokenizer is None:
-                raise ValueError('If text_data is not provided, both text_file'
-                                 ' and tokenizer must be given.')
+                raise ValueError('If name_data or desc_data are not provided,'
+                                 ' text_file and tokenizer must be given.')
             else:
                 # Check if a serialized version exists, otherwise create
                 data_path = osp.join(self.out_path, 'text.pt')
@@ -148,7 +148,9 @@ class TextGraphDataset(GraphDataset):
                     # Read descriptions, and build a map from entity ID to text
                     text_lines = open(text_file)
                     max_len = tokenizer.max_len
-                    text_data = torch.zeros((len(ent_ids), max_len + 1),
+                    desc_data = torch.zeros((len(ent_ids), max_len + 1),
+                                            dtype=torch.long)
+                    name_data = torch.zeros((len(ent_ids), max_len + 1),
                                             dtype=torch.long)
                     for line in text_lines:
                         name_start = line.find(' ')
@@ -159,29 +161,38 @@ class TextGraphDataset(GraphDataset):
                         description = f'{name}: {text}'
 
                         entity = line[:name_start].strip()
+                        ent_id = ent_ids[entity]
 
-                        tokens = tokenizer.encode(description,
-                                                  max_length=max_len,
-                                                  return_tensors='pt')
+                        name_tokens = tokenizer.encode(name,
+                                                       max_length=max_len,
+                                                       return_tensors='pt')
+                        desc_tokens = tokenizer.encode(description,
+                                                       max_length=max_len,
+                                                       return_tensors='pt')
 
-                        length = tokens.shape[1]
+                        name_len = name_tokens.shape[1]
+                        desc_len = desc_tokens.shape[1]
                         # Starting slice of row contains token IDs
-                        text_data[ent_ids[entity], :length] = tokens
+                        name_data[ent_id, :name_len] = name_tokens
+                        desc_data[ent_id, :desc_len] = desc_tokens
                         # Last cell contains sequence length
-                        text_data[ent_ids[entity], -1] = length
+                        name_data[ent_id, -1] = name_len
+                        desc_data[ent_id, -1] = desc_len
 
-                    torch.save(text_data, data_path)
+                    torch.save((name_data, desc_data), data_path)
                 else:
-                    text_data = torch.load(data_path)
+                    name_data, desc_data = torch.load(data_path)
 
-        self.text_data = text_data
+        self.name_data = name_data
+        self.desc_data = desc_data
 
-    def get_entity_descriptions(self, ent_ids):
+    def get_entity_descriptions(self, ent_ids, name_only=False):
         """Retrieve a batch of sequences (entity descriptions),
         for each entity in the input.
 
         Args:
             ent_ids: torch.Tensor of type torch.Long, of arbitrary shape (*)
+            name_only: bool, if True, only the name of the entity is returned
 
         Returns:
             tokens: torch.Tensor of type torch.Long, of shape (*, L) where L
@@ -192,7 +203,11 @@ class TextGraphDataset(GraphDataset):
         """
         # Convert ent_ids to tensor of token IDs and sequence length
         # Shape: (*, L + 1), where L is the maximum length sequence
-        data = self.text_data[ent_ids]
+        if name_only:
+            data = self.name_data[ent_ids]
+        else:
+            data = self.desc_data[ent_ids]
+
         max_len = data.shape[-1] - 1
 
         # Separate tokens from lengths
@@ -230,9 +245,9 @@ if __name__ == '__main__':
                            text_file='data/wikifb15k-237/descriptions.txt',
                            tokenizer=tokenizer)
     gva = TextGraphDataset('data/wikifb15k-237/valid.txt',
-                           text_data=gtr.text_data)
+                           desc_data=gtr.desc_data)
     gte = TextGraphDataset('data/wikifb15k-237/test.txt',
-                           text_data=gtr.text_data)
+                           desc_data=gtr.desc_data)
 
     from torch.utils.data import DataLoader
 
