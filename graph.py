@@ -122,13 +122,17 @@ class RelTransE(nn.Module):
         return energy
 
     def forward(self, *data):
-        pos_pairs, neg_pairs, rels, ent_embs = data
+        pos_pairs, neg_pairs, rels, ent_embs, alignments = data
         pos_energy = self.energy(*torch.chunk(pos_pairs, chunks=2, dim=1),
                                  rels, ent_embs)
         neg_energy = self.energy(*torch.chunk(neg_pairs, chunks=2, dim=1),
                                  rels, ent_embs)
 
-        loss = self.margin + pos_energy - neg_energy
+        relevance = alignments.sum(dim=0)
+        pos_mask = relevance[pos_pairs].prod(dim=1, keepdim=True)
+        neg_mask = relevance[neg_pairs].prod(dim=1, keepdim=True)
+
+        loss = self.margin + (pos_mask * pos_energy) - (neg_mask * neg_energy)
         loss[loss < 0] = 0
 
         return loss.mean()

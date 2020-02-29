@@ -25,6 +25,8 @@ def config():
     p_norm = 1
     max_epochs = 500
     pooling = 'mean'
+    use_scheduler = True
+    num_workers = 4
 
 
 @ex.capture
@@ -100,11 +102,11 @@ def link_prediction(dim, lr, margin, p_norm, max_epochs,
     train_eval_loader = DataLoader(dataset, batch_size=128)
 
     valid_data = TextGraphDataset('data/wikifb15k-237/valid.txt',
-                                  desc_data=dataset.desc_data)
+                                  text_data=dataset.text_data)
     valid_loader = DataLoader(valid_data, batch_size=128)
 
     test_data = TextGraphDataset('data/wikifb15k-237/test.txt',
-                                 desc_data=dataset.desc_data)
+                                 text_data=dataset.text_data)
     test_loader = DataLoader(test_data, batch_size=128)
 
     model = BERTransE(dataset.num_ents, dataset.num_rels, dim=dim,
@@ -166,8 +168,7 @@ def get_entity_summaries(dataset, pooling, _run: Run, _log: Logger):
         # Get a batch of entity IDs
         batch_ents = all_ents[i:i + batch_size]
         # Get their corresponding descriptions
-        tokens, masks = dataset.get_entity_descriptions(batch_ents,
-                                                        name_only=True)
+        tokens, masks = dataset.get_entity_descriptions(batch_ents)
         # Encode with BERT and store result
         batch_emb = summarizer(tokens.to(device), masks.to(device))
         ent_summaries[i:i + batch_size] = batch_emb
@@ -181,8 +182,8 @@ def get_entity_summaries(dataset, pooling, _run: Run, _log: Logger):
 
 
 @ex.automain
-def train_align(lr, margin, p_norm, max_epochs, pooling,
-                _run: Run, _log: Logger):
+def train_align(lr, margin, p_norm, max_epochs, pooling, use_scheduler,
+                num_workers, _run: Run, _log: Logger):
 
     tokenizer = AlbertTokenizer.from_pretrained('albert-base-v2')
     dataset = TextGraphDataset(triples_file='data/wikifb15k-237/train.txt',
@@ -193,7 +194,7 @@ def train_align(lr, margin, p_norm, max_epochs, pooling,
 
     loader = DataLoader(dataset, batch_size=256, shuffle=True,
                         collate_fn=dataset.graph_negative_sampling,
-                        num_workers=4)
+                        num_workers=num_workers)
 
     summaries = get_entity_summaries(dataset, pooling)
 
@@ -204,10 +205,11 @@ def train_align(lr, margin, p_norm, max_epochs, pooling,
     optimizer = Adam([{'params': aligner.parameters()},
                       {'params': graph_model.parameters()}], lr=lr)
 
-    warmup = int(0.2 * max_epochs)
-    scheduler = get_linear_schedule_with_warmup(optimizer,
-                                                num_warmup_steps=warmup,
-                                                num_training_steps=max_epochs)
+    if use_scheduler:
+        warmup = int(0.2 * max_epochs)
+        scheduler = get_linear_schedule_with_warmup(optimizer,
+                                                    num_warmup_steps=warmup,
+                                                    num_training_steps=max_epochs)
 
     for i in range(max_epochs):
         # Get entity description
@@ -217,13 +219,13 @@ def train_align(lr, margin, p_norm, max_epochs, pooling,
         mask = mask.to(device)
 
         # Use alignment model to obtain entity embeddings
-        ent_embs = aligner(tokens, mask, summaries)
+        ent_embs, alignments = aligner(tokens, mask, summaries)
 
         # Run 1 epoch of TransE, accumulating gradients
         train_loss = 0
         for step, data in enumerate(loader):
             loss = graph_model(*[tensor.to(device) for tensor in data],
-                               ent_embs)
+                               ent_embs, alignments)
 
             loss.backward(retain_graph=True)
 
@@ -258,7 +260,8 @@ def train_align(lr, margin, p_norm, max_epochs, pooling,
         _run.log_scalar('max_grad', max_grad_all)
 
         optimizer.step()
-        scheduler.step()
+        if use_scheduler:
+            scheduler.step()
         optimizer.zero_grad()
 
         # Save parameters
