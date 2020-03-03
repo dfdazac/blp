@@ -58,22 +58,17 @@ class GraphDataset(Dataset):
             maps = torch.load(maps_path)
             ent_ids, rel_ids = maps['ent_ids'], maps['rel_ids']
 
-        if not osp.exists(data_path):
-            # Read triples and store as ints in tensor
-            file = open(triples_file)
-            triples = []
-            for i, line in enumerate(file):
-                head, rel, tail = line.split()
-                triples.append([ent_ids[head], ent_ids[tail], rel_ids[rel]])
+        # Read triples and store as ints in tensor
+        file = open(triples_file)
+        triples = []
+        for i, line in enumerate(file):
+            head, rel, tail = line.split()
+            triples.append([ent_ids[head], ent_ids[tail], rel_ids[rel]])
 
-            self.triples = torch.tensor(triples, dtype=torch.long)
-            torch.save(self.triples, data_path)
+        self.triples = torch.tensor(triples, dtype=torch.long)
 
-            # Save maps for reuse
-            if not osp.exists(maps_path):
-                torch.save({'ent_ids': ent_ids, 'rel_ids': rel_ids}, maps_path)
-        else:
-            self.triples = torch.load(data_path)
+        # Save maps for reuse
+        torch.save({'ent_ids': ent_ids, 'rel_ids': rel_ids}, maps_path)
 
         self.num_ents = len(ent_ids)
         self.num_rels = len(rel_ids)
@@ -138,41 +133,34 @@ class TextGraphDataset(GraphDataset):
             if text_file is None or tokenizer is None:
                 raise ValueError('If text_data is not provided, both text_file'
                                  ' and tokenizer must be given.')
-            else:
-                # Check if a serialized version exists, otherwise create
-                data_path = osp.join(self.out_path, 'text.pt')
-                if not osp.exists(data_path):
-                    maps = torch.load(self.maps_path)
-                    ent_ids = maps['ent_ids']
 
-                    # Read descriptions, and build a map from entity ID to text
-                    text_lines = open(text_file)
-                    max_len = tokenizer.max_len
-                    text_data = torch.zeros((len(ent_ids), max_len + 1),
-                                            dtype=torch.long)
-                    for line in text_lines:
-                        name_start = line.find(' ')
-                        name_end = line.find(DELIM)
+            maps = torch.load(self.maps_path)
+            ent_ids = maps['ent_ids']
 
-                        name = line[name_start:name_end].strip()
-                        text = line[name_end + len(DELIM):].strip()
-                        description = f'{name}: {text}'
+            # Read descriptions, and build a map from entity ID to text
+            text_lines = open(text_file)
+            max_len = tokenizer.max_len
+            text_data = torch.zeros((len(ent_ids), max_len + 1),
+                                    dtype=torch.long)
+            for line in text_lines:
+                name_start = line.find(' ')
+                name_end = line.find(DELIM)
 
-                        entity = line[:name_start].strip()
+                name = line[name_start:name_end].strip()
+                text = line[name_end + len(DELIM):].strip()
+                description = f'{name}: {text}'
 
-                        tokens = tokenizer.encode(description,
-                                                  max_length=max_len,
-                                                  return_tensors='pt')
+                entity = line[:name_start].strip()
 
-                        length = tokens.shape[1]
-                        # Starting slice of row contains token IDs
-                        text_data[ent_ids[entity], :length] = tokens
-                        # Last cell contains sequence length
-                        text_data[ent_ids[entity], -1] = length
+                tokens = tokenizer.encode(description,
+                                          max_length=max_len,
+                                          return_tensors='pt')
 
-                    torch.save(text_data, data_path)
-                else:
-                    text_data = torch.load(data_path)
+                length = tokens.shape[1]
+                # Starting slice of row contains token IDs
+                text_data[ent_ids[entity], :length] = tokens
+                # Last cell contains sequence length
+                text_data[ent_ids[entity], -1] = length
 
         self.text_data = text_data
 
