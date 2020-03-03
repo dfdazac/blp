@@ -114,9 +114,9 @@ class RelTransE(nn.Module):
         nn.init.kaiming_uniform_(self.rel_emb.weight, nonlinearity='linear')
 
     def energy(self, head, tail, rel, ent_emb):
-        h = F.normalize(ent_emb[head], dim=-1)
-        r = F.normalize(self.rel_emb(rel), dim=-1)
-        t = F.normalize(ent_emb[tail], dim=-1)
+        h = ent_emb[head]
+        r = self.rel_emb(rel)
+        t = ent_emb[tail]
 
         energy = torch.norm(h + r - t, dim=-1, p=self.p_norm)
         return energy
@@ -128,11 +128,7 @@ class RelTransE(nn.Module):
         neg_energy = self.energy(*torch.chunk(neg_pairs, chunks=2, dim=1),
                                  rels, ent_embs)
 
-        relevance = alignments.sum(dim=0)
-        pos_mask = relevance[pos_pairs].prod(dim=1, keepdim=True)
-        neg_mask = relevance[neg_pairs].prod(dim=1, keepdim=True)
-
-        loss = self.margin + (pos_mask * pos_energy) - (neg_mask * neg_energy)
+        loss = self.margin + pos_energy - neg_energy
         loss[loss < 0] = 0
 
         return loss.mean()

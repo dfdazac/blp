@@ -25,7 +25,6 @@ def config():
     p_norm = 1
     max_epochs = 500
     pooling = 'mean'
-    use_scheduler = True
     num_workers = 4
 
 
@@ -182,7 +181,7 @@ def get_entity_summaries(dataset, pooling, _run: Run, _log: Logger):
 
 
 @ex.automain
-def train_align(lr, margin, p_norm, max_epochs, pooling, use_scheduler,
+def train_align(lr, margin, p_norm, max_epochs, pooling,
                 num_workers, _run: Run, _log: Logger):
 
     tokenizer = AlbertTokenizer.from_pretrained('albert-base-v2')
@@ -195,7 +194,6 @@ def train_align(lr, margin, p_norm, max_epochs, pooling, use_scheduler,
     loader = DataLoader(dataset, batch_size=256, shuffle=True,
                         collate_fn=dataset.graph_negative_sampling,
                         num_workers=num_workers)
-
     summaries = get_entity_summaries(dataset, pooling)
 
     aligner = EntityAligner().to(device)
@@ -204,12 +202,6 @@ def train_align(lr, margin, p_norm, max_epochs, pooling, use_scheduler,
 
     optimizer = Adam([{'params': aligner.parameters()},
                       {'params': graph_model.parameters()}], lr=lr)
-
-    if use_scheduler:
-        warmup = int(0.2 * max_epochs)
-        scheduler = get_linear_schedule_with_warmup(optimizer,
-                                                    num_warmup_steps=warmup,
-                                                    num_training_steps=max_epochs)
 
     for i in range(max_epochs):
         # Get entity description
@@ -260,8 +252,6 @@ def train_align(lr, margin, p_norm, max_epochs, pooling, use_scheduler,
         _run.log_scalar('max_grad', max_grad_all)
 
         optimizer.step()
-        if use_scheduler:
-            scheduler.step()
         optimizer.zero_grad()
 
         # Save parameters
