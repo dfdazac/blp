@@ -1,6 +1,5 @@
 import os
 import os.path as osp
-import numpy as np
 import torch
 from torch.utils.data import Dataset
 import transformers
@@ -39,24 +38,22 @@ class GraphDataset(Dataset):
     """
     def __init__(self, triples_file, ents_file=None, rels_file=None):
         base_path = osp.dirname(triples_file)
-        filename = osp.basename(triples_file)
         self.out_path = osp.join(base_path, 'processed')
-        data_path = osp.join(self.out_path, f'{filename}.pt')
         maps_path = osp.join(self.out_path, 'maps.pt')
 
         if not osp.exists(self.out_path):
             os.mkdir(self.out_path)
 
         # Create or load maps from entity and relation strings to unique IDs
-        if not osp.exists(maps_path):
-            if not ents_file or not rels_file:
+        if not ents_file or not rels_file:
+            if not osp.exists(maps_path):
                 raise ValueError('Maps file not found.')
 
-            ent_ids = file_to_ids(ents_file)
-            rel_ids = file_to_ids(rels_file)
-        else:
             maps = torch.load(maps_path)
             ent_ids, rel_ids = maps['ent_ids'], maps['rel_ids']
+        else:
+            ent_ids = file_to_ids(ents_file)
+            rel_ids = file_to_ids(rels_file)
 
         # Read triples and store as ints in tensor
         file = open(triples_file)
@@ -89,10 +86,8 @@ class GraphDataset(Dataset):
         num_triples = pos_pairs.shape[0]
 
         # Randomly swap head or tail for a random entity
-        corrupt_idx = np.random.choice([0, 1], size=num_triples)
-        corrupt_ent = np.random.randint(self.num_ents, size=num_triples)
-        corrupt_idx = torch.tensor(corrupt_idx)
-        corrupt_ent = torch.tensor(corrupt_ent)
+        corrupt_idx = torch.randint(high=2, size=[num_triples])
+        corrupt_ent = torch.randint(high=self.num_ents, size=[num_triples])
         triple_idx = torch.arange(num_triples)
 
         neg_pairs = pos_pairs.clone()
@@ -148,7 +143,7 @@ class TextGraphDataset(GraphDataset):
 
                 name = line[name_start:name_end].strip()
                 text = line[name_end + len(DELIM):].strip()
-                description = f'{name}: {text}'
+                description = f'{name} [SEP] {text}'
 
                 entity = line[:name_start].strip()
 
