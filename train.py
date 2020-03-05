@@ -26,6 +26,7 @@ def config():
     max_epochs = 500
     pooling = 'mean'
     num_workers = 4
+    encoder_name = 'albert-base-v2'
 
 
 @ex.capture
@@ -68,8 +69,8 @@ def eval_link_prediction(model, loader, epoch, _run: Run, _log: Logger,
         head, tail, rel = torch.chunk(triples, chunks=3, dim=1)
 
         # Check all possible heads and tails
-        heads_predictions = model.energy_eval(all_ents, tail, rel, ent_emb)
-        tails_predictions = model.energy_eval(head, all_ents, rel, ent_emb)
+        heads_predictions = model.energy(all_ents, tail, rel, ent_emb)
+        tails_predictions = model.energy(head, all_ents, rel, ent_emb)
 
         pred_ents = torch.cat((tails_predictions, heads_predictions))
         true_ents = torch.cat((tail, head))
@@ -82,22 +83,22 @@ def eval_link_prediction(model, loader, epoch, _run: Run, _log: Logger,
     mrr = mrr / batch_count
 
     _log.info(f'{prefix} mrr: {mrr:.4f}  hits@10: {hits:.4f}')
-    _run.log_scalar(f'{prefix}_valid_mrr', mrr, epoch)
-    _run.log_scalar(f'{prefix}_valid_hits@10', hits, epoch)
+    _run.log_scalar(f'{prefix}_mrr', mrr, epoch)
+    _run.log_scalar(f'{prefix}_hits@10', hits, epoch)
 
 
 @ex.command
-def link_prediction(dim, lr, margin, p_norm, max_epochs,
-                    _run: Run, _log: Logger):
-    tokenizer = AlbertTokenizer.from_pretrained('albert-base-v2')
+def link_prediction(dim, lr, margin, p_norm, max_epochs, encoder_name,
+                    num_workers, _run: Run, _log: Logger):
+    tokenizer = AlbertTokenizer.from_pretrained(encoder_name)
     dataset = TextGraphDataset(triples_file='data/wikifb15k-237/train.txt',
                                ents_file='data/wikifb15k-237/entities.txt',
                                rels_file='data/wikifb15k-237/relations.txt',
                                text_file='data/wikifb15k-237/descriptions.txt',
                                tokenizer=tokenizer)
-    train_loader = DataLoader(dataset, batch_size=32, shuffle=True,
+    train_loader = DataLoader(dataset, batch_size=8, shuffle=True,
                               collate_fn=dataset.negative_sampling,
-                              num_workers=4)
+                              num_workers=num_workers)
     train_eval_loader = DataLoader(dataset, batch_size=128)
 
     valid_data = TextGraphDataset('data/wikifb15k-237/valid.txt',
@@ -108,7 +109,7 @@ def link_prediction(dim, lr, margin, p_norm, max_epochs,
                                  text_data=dataset.text_data)
     test_loader = DataLoader(test_data, batch_size=128)
 
-    model = BERTransE(dataset.num_ents, dataset.num_rels, dim=dim,
+    model = BERTransE(dataset.num_ents, dataset.num_rels, dim, encoder_name,
                       margin=margin, p_norm=p_norm).to(device)
 
     optimizer = Adam([{'params': model.bert.albert.parameters(), 'lr': lr},
