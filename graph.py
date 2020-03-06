@@ -110,9 +110,9 @@ class RelTransE(nn.Module):
         nn.init.kaiming_uniform_(self.rel_emb.weight, nonlinearity='linear')
 
     def energy(self, head, tail, rel, ent_emb):
-        h = ent_emb[head]
-        r = self.rel_emb(rel)
-        t = ent_emb[tail]
+        h = F.normalize(ent_emb[head], dim=-1)
+        r = F.normalize(self.rel_emb(rel), dim=-1)
+        t = F.normalize(ent_emb[tail], dim=-1)
 
         energy = torch.norm(h + r - t, dim=-1, p=self.p_norm)
         return energy
