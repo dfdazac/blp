@@ -27,6 +27,8 @@ def config():
     pooling = 'mean'
     num_workers = 4
     encoder_name = 'albert-base-v2'
+    tune_summaries = True
+    add_embs = False
 
 
 @ex.capture
@@ -182,8 +184,8 @@ def get_entity_summaries(dataset, pooling, _run: Run, _log: Logger):
 
 
 @ex.automain
-def train_align(lr, margin, p_norm, max_epochs, pooling,
-                num_workers, _run: Run, _log: Logger):
+def train_align(lr, margin, p_norm, max_epochs, pooling, tune_summaries,
+                add_embs, num_workers, _run: Run, _log: Logger):
 
     tokenizer = AlbertTokenizer.from_pretrained('albert-base-v2')
     dataset = TextGraphDataset(triples_file='data/wikifb15k-237/train.txt',
@@ -195,16 +197,26 @@ def train_align(lr, margin, p_norm, max_epochs, pooling,
     loader = DataLoader(dataset, batch_size=256, shuffle=True,
                         collate_fn=dataset.graph_negative_sampling,
                         num_workers=num_workers)
-    summaries = get_entity_summaries(dataset, pooling)
+    summaries = torch.load('output/summaries-64.pt', map_location='cpu')
+    summaries = summaries.to(device)
+    # get_entity_summaries(dataset, pooling)
 
-    aligner = EntityAligner().to(device)
+    aligner = EntityAligner(summaries if tune_summaries else None,
+                            add_embs).to(device)
     graph_model = RelTransE(dataset.num_rels, aligner.dim,
                             margin, p_norm).to(device)
 
     optimizer = Adam([{'params': aligner.parameters()},
                       {'params': graph_model.parameters()}], lr=lr)
+    total_steps = max_epochs
+    warmup = int(0.1 * total_steps)
+    scheduler = get_linear_schedule_with_warmup(optimizer,
+                                                num_warmup_steps=warmup,
+                                                num_training_steps=total_steps)
 
-    for i in range(max_epochs):
+    num_train_ents = max_epochs
+    num_val_ents = 1000
+    for i in range(num_train_ents):
         # Get entity description
         ent_id = torch.tensor([i], dtype=torch.long)
         tokens, mask = dataset.get_entity_descriptions(ent_id)
@@ -225,35 +237,15 @@ def train_align(lr, margin, p_norm, max_epochs, pooling,
             train_loss += loss.item()
 
             if step % 200 == 0:
-                _log.info(f'Entity {i + 1}/{dataset.num_ents} '
+                _log.info(f'Entity {i + 1}/{num_train_ents} '
                           f'[{step}/{len(loader)}]: {loss.item():.6f}')
                 _run.log_scalar('batch_loss', loss.item())
 
-        _run.log_scalar('train_loss', train_loss / len(loader), i)
-
-        # Check gradient health
-        min_grad_all = float('inf')
-        max_grad_all = -float('inf')
-
-        for group in optimizer.param_groups:
-            for p in group['params']:
-                if p.grad is None:
-                    continue
-                grad = p.grad.data
-
-                min_grad = grad.min().item()
-                max_grad = grad.max().item()
-
-                if min_grad <= min_grad_all:
-                    min_grad_all = min_grad
-                if max_grad >= max_grad_all:
-                    max_grad_all = max_grad
-
-        _run.log_scalar('min_grad', min_grad_all)
-        _run.log_scalar('max_grad', max_grad_all)
-
         optimizer.step()
         optimizer.zero_grad()
+        scheduler.step()
+
+        _run.log_scalar('train_loss', train_loss / len(loader), i)
 
         # Save parameters
         torch.save(aligner.state_dict(),
@@ -261,3 +253,32 @@ def train_align(lr, margin, p_norm, max_epochs, pooling,
 
         torch.save(graph_model.state_dict(),
                    osp.join(OUT_PATH, f'transe-{_run._id}.pt'))
+
+        # Evaluate
+        _log.info('Validating first token accuracy...')
+        with torch.no_grad():
+            accuracy = 0.0
+            count = 0
+            j = num_train_ents
+            batch_size = 32
+            while j < num_train_ents + num_val_ents:
+                # Get entity description
+                ent_id = torch.arange(j, j + batch_size)
+                tokens, mask = dataset.get_entity_descriptions(ent_id)
+                tokens = tokens.to(device)
+                mask = mask.to(device)
+
+                # Use alignment model to obtain entity embeddings
+                ent_embs, alignments = aligner(tokens, mask, summaries)
+                # Get alignment with highest score for first token
+                pred_ent = torch.argmax(alignments[:, 1], dim=-1).cpu()
+                count += batch_size
+
+                accuracy += torch.sum(ent_id == pred_ent).item()
+
+                j += batch_size
+
+            accuracy = 100 * accuracy/count
+
+        _log.info(f'Validation - first token accuracy: {accuracy:.2f}%')
+        _run.log_scalar('valid-acc', accuracy, i)

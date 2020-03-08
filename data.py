@@ -143,7 +143,7 @@ class TextGraphDataset(GraphDataset):
 
                 name = line[name_start:name_end].strip()
                 text = line[name_end + len(DELIM):].strip()
-                description = f'{name} [SEP] {text}'
+                description = f'{name}: {text}'
 
                 entity = line[:name_start].strip()
 

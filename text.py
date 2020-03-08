@@ -40,16 +40,24 @@ class SummaryModel(nn.Module):
 
 
 class EntityAligner(nn.Module):
-    def __init__(self):
+    def __init__(self, summaries=None, add_embs=False):
         super().__init__()
 
         self.text_encoder = Albert.from_pretrained('albert-base-v2',
                                                    output_attentions=False,
                                                    output_hidden_states=False)
         self.dim = self.text_encoder.config.hidden_size
+        self.add_embs = add_embs
+
+        if summaries is not None:
+            self.summaries = nn.Parameter(summaries, requires_grad=True)
+        else:
+            self.summaries = None
 
     def forward(self, *data):
         tokens, mask, summaries = data
+        if self.summaries is not None:
+            summaries = self.summaries
 
         # Obtain word representations
         token_emb = self.text_encoder(tokens, mask)[0]
@@ -63,5 +71,7 @@ class EntityAligner(nn.Module):
         # Compute entity embeddings as weighted combination of
         # word representations
         ent_embs = torch.matmul(alignments.transpose(1, 2), token_emb)
+        if self.add_embs:
+            ent_embs = summaries + ent_embs
 
         return ent_embs.squeeze(), alignments.squeeze()
