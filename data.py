@@ -3,6 +3,7 @@ import os.path as osp
 import torch
 from torch.utils.data import Dataset
 import transformers
+import networkx as nx
 
 UNK = '[UNK]'
 DELIM = '####'
@@ -69,13 +70,14 @@ class GraphDataset(Dataset):
 
         self.num_ents = len(ent_ids)
         self.num_rels = len(rel_ids)
+        self.num_triples = self.triples.shape[0]
         self.maps_path = maps_path
 
     def __getitem__(self, index):
         return self.triples[index]
 
     def __len__(self):
-        return self.triples.shape[0]
+        return self.num_triples
 
     def negative_sampling(self, data_list):
         """Given a batch of triples, return it together with a batch of
@@ -205,8 +207,30 @@ class TextGraphDataset(GraphDataset):
         return super().negative_sampling(data_list)
 
 
-if __name__ == '__main__':
-    tok = transformers.BertTokenizer.from_pretrained('bert-base-uncased')
+class EntityTextGraphDataset(TextGraphDataset):
+    def __init__(self, triples_file, ents_file=None, rels_file=None,
+                 text_data=None, text_file=None,
+                 tokenizer: transformers.PreTrainedTokenizer = None):
+        super().__init__(triples_file, ents_file, rels_file, text_data,
+                         text_file, tokenizer)
+
+        self.graph = nx.MultiDiGraph()
+        self.graph.add_weighted_edges_from(self.triples.tolist(), weight='rel')
+
+    def __getitem__(self, item):
+        """An item of this dataset is a KG entity. It returns its ID,
+        the triples in which it is involved, and its description and that
+        of its neighbors."""
+        neighbors = self.graph[item]
+        triples = [[item, ]]
+        return item
+
+    def __len__(self):
+        return self.num_ents
+
+
+def test_text_graph_dataset():
+    tok = transformers.AlbertTokenizer.from_pretrained('albert-base-v2')
     gtr = TextGraphDataset('data/wikifb15k-237/train.txt',
                            ents_file='data/wikifb15k-237/entities.txt',
                            rels_file='data/wikifb15k-237/relations.txt',
@@ -221,3 +245,20 @@ if __name__ == '__main__':
 
     loader = DataLoader(gtr, batch_size=8, collate_fn=gtr.negative_sampling)
     next(iter(loader))
+
+
+def test_entity_text_graph_dataset():
+    tok = transformers.AlbertTokenizer.from_pretrained('albert-base-v2')
+    gtr = EntityTextGraphDataset('data/wikifb15k-237/train.txt',
+                                 ents_file='data/wikifb15k-237/entities.txt',
+                                 rels_file='data/wikifb15k-237/relations.txt',
+                                 text_file='data/wikifb15k-237/descriptions.txt',
+                                 tokenizer=tok)
+
+    from torch.utils.data import DataLoader
+
+    loader = DataLoader(gtr, batch_size=8, collate_fn=gtr.negative_sampling)
+    next(iter(loader))
+
+
+test_entity_text_graph_dataset()
