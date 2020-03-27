@@ -3,7 +3,6 @@ import os.path as osp
 import torch
 from torch.utils.data import Dataset
 import transformers
-import networkx as nx
 
 UNK = '[UNK]'
 DELIM = '####'
@@ -56,11 +55,16 @@ class GraphDataset(Dataset):
             ent_ids = file_to_ids(ents_file)
             rel_ids = file_to_ids(rels_file)
 
+        entities = set()
+        relations = set()
+
         # Read triples and store as ints in tensor
         file = open(triples_file)
         triples = []
         for i, line in enumerate(file):
             head, rel, tail = line.split()
+            entities.update([head, tail])
+            relations.add(rel)
             triples.append([ent_ids[head], ent_ids[tail], rel_ids[rel]])
 
         self.triples = torch.tensor(triples, dtype=torch.long)
@@ -68,8 +72,9 @@ class GraphDataset(Dataset):
         # Save maps for reuse
         torch.save({'ent_ids': ent_ids, 'rel_ids': rel_ids}, maps_path)
 
-        self.num_ents = len(ent_ids)
-        self.num_rels = len(rel_ids)
+        self.num_ents = len(entities)
+        self.num_rels = len(relations)
+        self.entities = torch.tensor(list(ent_ids.values()))
         self.num_triples = self.triples.shape[0]
         self.maps_path = maps_path
 
@@ -88,12 +93,13 @@ class GraphDataset(Dataset):
         num_triples = pos_pairs.shape[0]
 
         # Randomly swap head or tail for a random entity
-        corrupt_idx = torch.randint(high=2, size=[num_triples])
-        corrupt_ent = torch.randint(high=self.num_ents, size=[num_triples])
+        corrupt_pos = torch.randint(high=2, size=[num_triples])
+        corrupt_idx = torch.randint(high=self.num_ents, size=[num_triples])
+        corrupt_ent = self.entities[corrupt_idx]
         triple_idx = torch.arange(num_triples)
 
         neg_pairs = pos_pairs.clone()
-        neg_pairs[triple_idx, corrupt_idx] = corrupt_ent
+        neg_pairs[triple_idx, corrupt_pos] = corrupt_ent
 
         return pos_pairs, neg_pairs, rels
 
@@ -122,44 +128,67 @@ class TextGraphDataset(GraphDataset):
             the respective entity description.
     """
     def __init__(self, triples_file, ents_file=None, rels_file=None,
-                 text_data=None, text_file=None,
+                 text_file=None, max_len=None,
                  tokenizer: transformers.PreTrainedTokenizer=None):
         super().__init__(triples_file, ents_file, rels_file)
 
-        if text_data is None:
-            if text_file is None or tokenizer is None:
-                raise ValueError('If text_data is not provided, both text_file'
-                                 ' and tokenizer must be given.')
-
+        if text_file is not None or tokenizer is not None:
             maps = torch.load(self.maps_path)
             ent_ids = maps['ent_ids']
 
             # Read descriptions, and build a map from entity ID to text
             text_lines = open(text_file)
-            max_len = tokenizer.max_len
-            text_data = torch.zeros((len(ent_ids), max_len + 1),
-                                    dtype=torch.long)
+            if max_len is None:
+                max_len = tokenizer.max_len
+
+            self.text_data = torch.zeros((len(ent_ids), max_len + 1),
+                                         dtype=torch.long)
+            self.name_data = torch.zeros((len(ent_ids), max_len + 1),
+                                         dtype=torch.long)
+
             for line in text_lines:
                 name_start = line.find(' ')
                 name_end = line.find(DELIM)
 
                 name = line[name_start:name_end].strip()
                 text = line[name_end + len(DELIM):].strip()
-                description = f'{name}: {text}'
 
                 entity = line[:name_start].strip()
+                ent_id = ent_ids[entity]
 
-                tokens = tokenizer.encode(description,
-                                          max_length=max_len,
-                                          return_tensors='pt')
+                text_tokens = tokenizer.encode(text,
+                                               max_length=max_len,
+                                               return_tensors='pt')
+                name_tokens = tokenizer.encode(name,
+                                               max_length=max_len,
+                                               return_tensors='pt',
+                                               add_special_tokens=False)
 
-                length = tokens.shape[1]
+                text_len = text_tokens.shape[1]
+                name_len = name_tokens.shape[1]
+
                 # Starting slice of row contains token IDs
-                text_data[ent_ids[entity], :length] = tokens
+                self.name_data[ent_id, :name_len] = name_tokens
+                self.text_data[ent_id, :text_len] = text_tokens
                 # Last cell contains sequence length
-                text_data[ent_ids[entity], -1] = length
+                self.name_data[ent_id, -1] = name_len
+                self.text_data[ent_id, -1] = text_len
 
-        self.text_data = text_data
+    @staticmethod
+    def get_batch_data(data, ent_ids):
+        # Convert ent_ids to tensor of token IDs and sequence length
+        # Shape: (*, L + 1), where L is the maximum length sequence
+        seq_data = data[ent_ids]
+        max_len = seq_data.shape[-1] - 1
+
+        # Separate tokens from lengths
+        tokens, seq_len = seq_data.split(max_len, dim=-1)
+        max_batch_len = seq_len.max()
+        # Truncate batch
+        tokens = tokens[..., :max_batch_len]
+        masks = (tokens > 0).float()
+
+        return tokens, masks, seq_len
 
     def get_entity_descriptions(self, ent_ids):
         """Retrieve a batch of sequences (entity descriptions),
@@ -175,19 +204,21 @@ class TextGraphDataset(GraphDataset):
                 containing 0 in positions of tokens with padding,
                 and 1 otherwise.
         """
-        # Convert ent_ids to tensor of token IDs and sequence length
-        # Shape: (*, L + 1), where L is the maximum length sequence
-        data = self.text_data[ent_ids]
-        max_len = data.shape[-1] - 1
+        name_tok, name_mask, name_len = self.get_batch_data(self.name_data,
+                                                            ent_ids)
+        text_tok, text_mask, text_len = self.get_batch_data(self.text_data,
+                                                            ent_ids)
 
-        # Separate tokens from lengths
-        tokens, lengths = data.split(max_len, dim=-1)
-        max_batch_len = lengths.max()
-        # Truncate batch
-        tokens = tokens[..., :max_batch_len]
-        masks = (tokens > 0).float()
+        return name_tok, name_mask, name_len, text_tok, text_mask, text_len
 
-        return tokens, masks
+    def collate_text(self, data_list):
+        """Given a batch of triples, return it in the form of
+        entity descriptions, and the relation types between them.
+        Use as a collate_fn for a DataLoader.
+        """
+        pos_pairs, rels = torch.stack(data_list).split(2, dim=1)
+        tokens, mask, _ = self.get_batch_data(self.text_data, pos_pairs)
+        return tokens, mask, rels
 
     def negative_sampling(self, data_list):
         pos_pairs, neg_pairs, rels = super().negative_sampling(data_list)
@@ -207,58 +238,24 @@ class TextGraphDataset(GraphDataset):
         return super().negative_sampling(data_list)
 
 
-class EntityTextGraphDataset(TextGraphDataset):
-    def __init__(self, triples_file, ents_file=None, rels_file=None,
-                 text_data=None, text_file=None,
-                 tokenizer: transformers.PreTrainedTokenizer = None):
-        super().__init__(triples_file, ents_file, rels_file, text_data,
-                         text_file, tokenizer)
-
-        self.graph = nx.MultiDiGraph()
-        self.graph.add_weighted_edges_from(self.triples.tolist(), weight='rel')
-
-    def __getitem__(self, item):
-        """An item of this dataset is a KG entity. It returns its ID,
-        the triples in which it is involved, and its description and that
-        of its neighbors."""
-        neighbors = self.graph[item]
-        triples = [[item, ]]
-        return item
-
-    def __len__(self):
-        return self.num_ents
-
-
 def test_text_graph_dataset():
     tok = transformers.AlbertTokenizer.from_pretrained('albert-base-v2')
-    gtr = TextGraphDataset('data/wikifb15k-237/train.txt',
+    gtr = TextGraphDataset('data/wikifb15k-237/train-triples.txt',
                            ents_file='data/wikifb15k-237/entities.txt',
                            rels_file='data/wikifb15k-237/relations.txt',
                            text_file='data/wikifb15k-237/descriptions.txt',
                            tokenizer=tok)
-    gva = TextGraphDataset('data/wikifb15k-237/valid.txt',
-                           text_data=gtr.text_data)
-    gte = TextGraphDataset('data/wikifb15k-237/test.txt',
-                           text_data=gtr.text_data)
+    gva = TextGraphDataset('data/wikifb15k-237/valid-triples.txt')
+    gte = TextGraphDataset('data/wikifb15k-237/test-triples.txt')
 
     from torch.utils.data import DataLoader
 
-    loader = DataLoader(gtr, batch_size=8, collate_fn=gtr.negative_sampling)
-    next(iter(loader))
+    loader = DataLoader(gtr, batch_size=8, collate_fn=gtr.collate_text,
+                        shuffle=True)
+    data = next(iter(loader))
+
+    print('Done')
 
 
-def test_entity_text_graph_dataset():
-    tok = transformers.AlbertTokenizer.from_pretrained('albert-base-v2')
-    gtr = EntityTextGraphDataset('data/wikifb15k-237/train.txt',
-                                 ents_file='data/wikifb15k-237/entities.txt',
-                                 rels_file='data/wikifb15k-237/relations.txt',
-                                 text_file='data/wikifb15k-237/descriptions.txt',
-                                 tokenizer=tok)
-
-    from torch.utils.data import DataLoader
-
-    loader = DataLoader(gtr, batch_size=8, collate_fn=gtr.negative_sampling)
-    next(iter(loader))
-
-
-test_entity_text_graph_dataset()
+if __name__ == '__main__':
+    test_text_graph_dataset()
