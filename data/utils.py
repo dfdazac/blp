@@ -1,9 +1,14 @@
+import sys
 import requests
 from tqdm import tqdm
 import time
 import re
 from argparse import ArgumentParser
 import json
+import networkx as nx
+import random
+import os.path as osp
+from collections import Counter
 
 # Maximum number of entities allowed by Wiki APIs
 MAX_ENTITIES = 50
@@ -177,7 +182,6 @@ def discard_descriptions(desc_file, ent_fname):
             out_file.write(line)
 
 
-
 def clean(in_fname, min_tokens=5):
     """Read a file with entity descriptions, and save a clean copy with:
     - No entities with less than min_tokens words in the description
@@ -228,11 +232,148 @@ def write_descriptions(in_file, desc_file):
             out_file.write(f'{wikidata2fb[wikidata_id]}{description}')
 
 
+def parse_triples(triples_file):
+    """Read a file containing triples, with head, relation, and tail
+    separated by space. Returns list of lists."""
+    triples = []
+    rel_counts = Counter()
+    file = open(triples_file)
+    for line in file:
+        head, rel, tail = line.split()
+        triples.append([head, tail, rel])
+        rel_counts[rel] += 1
+
+    return triples, rel_counts
+
+
+def get_safely_removed_edges(graph, node, rel_counts, min_edges_left=100):
+    """Get counts of edge removed by type, after safely removing a given node.
+    Safely removing a node entails checking that no nodes are left
+    disconnected, and not removing edge types with count less than
+    a given amount.
+    """
+    neighbors = set(nx.all_neighbors(graph, node))
+    removed_rel_counts = Counter()
+    removed_edges = []
+
+    for m in neighbors:
+        # Check if m has more than 2 neighbors (node, and potentially itself)
+        # before continuing
+        m_neighborhood = set(nx.all_neighbors(graph, m))
+        if len(m_neighborhood) > 2:
+            # Check edges in both directions between node and m
+            pair = [node, m]
+            for i in range(2):
+                edge_dict = graph.get_edge_data(*pair)
+                if edge_dict is not None:
+                    # Check that removing the edges between node and m
+                    # does not leave less than min_edges_left
+                    edges = edge_dict.values()
+                    for edge in edges:
+                        rel = edge['weight']
+                        edges_left = rel_counts[rel] - removed_rel_counts[rel]
+                        if edges_left >= min_edges_left:
+                            removed_rel_counts[rel] += 1
+                            head, tail = pair
+                            removed_edges.append((head, rel, tail))
+                        else:
+                            return None
+
+                # Don't count self-loops twice
+                if node == m:
+                    break
+
+                pair = list(reversed(pair))
+        else:
+            return None
+
+    return removed_edges, removed_rel_counts
+
+
+def drop_entities(triples_file, train_size=0.8, valid_size=0.1, test_size=0.1):
+    """Drop entities from a graph, to create training, validation and test
+    splits.
+    Entities are dropped so that no disconnected nodes are left in the training
+    graph. Dropped entities are distributed between disjoint validation
+    and test sets.
+    """
+    if abs(train_size + valid_size + test_size - 1.0) > 1e-9:
+        raise ValueError('Split sizes must add to 1.')
+
+    random.seed(0)
+
+    graph = nx.MultiDiGraph()
+    triples, rel_counts = parse_triples(triples_file)
+    graph.add_weighted_edges_from(triples)
+    original_num_edges = graph.number_of_edges()
+
+    print(f'Loaded graph with {graph.number_of_nodes()} nodes '
+          f'and {graph.number_of_edges()} edges')
+
+    dropped_entities = []
+    dropped_edges = dict()
+    num_to_drop = int(graph.number_of_nodes() * (valid_size + test_size))
+
+    print(f'Removing {num_to_drop} entities...')
+    progress = tqdm(total=num_to_drop, file=sys.stdout)
+    while len(dropped_entities) < num_to_drop:
+        # Select a random entity and attempt to remove it
+        rand_ent = random.choice(list(graph.nodes))
+        removed_tuple = get_safely_removed_edges(graph, rand_ent, rel_counts)
+
+        if removed_tuple is not None:
+            removed_edges, removed_counts = removed_tuple
+            dropped_edges[rand_ent] = removed_edges
+            graph.remove_node(rand_ent)
+            dropped_entities.append(rand_ent)
+            rel_counts.subtract(removed_counts)
+            progress.update(1)
+
+    progress.close()
+
+    # Are there indeed no disconnected nodes?
+    assert len(list(nx.isolates(graph))) == 0
+
+    # Did we keep track of removed edges correctly?
+    num_removed_edges = sum(map(len, dropped_edges.values()))
+    assert num_removed_edges + graph.number_of_edges() == original_num_edges
+
+    split_ratio = valid_size/(valid_size + test_size)
+    split_idx = int(len(dropped_entities) * split_ratio)
+    val_ents = set(dropped_entities[:split_idx])
+    test_ents = set(dropped_entities[split_idx:])
+
+    # Check that val and test entity sets are disjoint
+    assert len(val_ents.intersection(test_ents)) == 0
+
+    names = ('valid', 'test')
+
+    dirname = osp.dirname(triples_file)
+    basename = osp.basename(triples_file)
+
+    for entity_set, set_name in zip((val_ents, test_ents), names):
+        with open(osp.join(dirname, f'{set_name}-{basename}'), 'w') as file:
+            for entity in entity_set:
+                triples = dropped_edges[entity]
+                for t in triples:
+                    file.write(' '.join(t) + '\n')
+
+        with open(osp.join(dirname, f'{set_name}-ents.txt'), 'w') as file:
+            file.writelines('\n'.join(entity_set))
+
+    with open(osp.join(dirname, f'train-{basename}'), 'w') as train_file:
+        for head, tail, rel in graph.edges(data=True):
+            train_file.write(f'{head} {rel["weight"]} {tail}\n')
+
+    print(f'Saved output files to {dirname}/')
+
+
 if __name__ == '__main__':
     parser = ArgumentParser(description='Extract Wikipedia pages for a file'
                                         'with a list of Wikidata entities.')
     parser.add_argument('command', choices=['fetch', 'clean', 'discard',
-                                            'describe', 'discard_desc'])
+                                            'describe', 'discard_desc',
+                                            'drop_entities'])
     parser.add_argument('--in_file', help='File with a list of entities')
     parser.add_argument('--triples_file', help='File with a list of triples')
     parser.add_argument('--desc_file', help='File with Wikipedia descriptions')
@@ -248,3 +389,5 @@ if __name__ == '__main__':
         write_descriptions(args.in_file, args.desc_file)
     elif args.command == 'discard_desc':
         discard_descriptions(args.desc_file, args.in_file)
+    elif args.command == 'drop_entities':
+        drop_entities(args.in_file)
