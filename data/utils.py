@@ -275,7 +275,7 @@ def get_safely_removed_edges(graph, node, rel_counts, min_edges_left=100):
                         if edges_left >= min_edges_left:
                             removed_rel_counts[rel] += 1
                             head, tail = pair
-                            removed_edges.append((head, rel, tail))
+                            removed_edges.append((head, tail, rel))
                         else:
                             return None
 
@@ -307,14 +307,14 @@ def drop_entities(triples_file, train_size=0.8, valid_size=0.1, test_size=0.1):
     graph.add_weighted_edges_from(triples)
     original_num_edges = graph.number_of_edges()
 
-    print(f'Loaded graph with {graph.number_of_nodes()} nodes '
-          f'and {graph.number_of_edges()} edges')
+    print(f'Loaded graph with {graph.number_of_nodes():,} entities '
+          f'and {graph.number_of_edges():,} edges')
 
     dropped_entities = []
     dropped_edges = dict()
     num_to_drop = int(graph.number_of_nodes() * (valid_size + test_size))
 
-    print(f'Removing {num_to_drop} entities...')
+    print(f'Removing {num_to_drop:,} entities...')
     progress = tqdm(total=num_to_drop, file=sys.stdout)
     while len(dropped_entities) < num_to_drop:
         # Select a random entity and attempt to remove it
@@ -338,13 +338,25 @@ def drop_entities(triples_file, train_size=0.8, valid_size=0.1, test_size=0.1):
     num_removed_edges = sum(map(len, dropped_edges.values()))
     assert num_removed_edges + graph.number_of_edges() == original_num_edges
 
-    split_ratio = valid_size/(valid_size + test_size)
+    split_ratio = test_size/(valid_size + test_size)
     split_idx = int(len(dropped_entities) * split_ratio)
-    val_ents = set(dropped_entities[:split_idx])
-    test_ents = set(dropped_entities[split_idx:])
+    # Test entities MUST come from first slice! This guarantees that
+    # validation entities don't have edges with them (because nodes were
+    # removed in sequence)
+    test_ents = set(dropped_entities[:split_idx])
+    val_ents = set(dropped_entities[split_idx:])
 
     # Check that val and test entity sets are disjoint
     assert len(val_ents.intersection(test_ents)) == 0
+
+    # Check that training and validation graph do not contain test entities
+    val_graph = nx.MultiDiGraph()
+    val_edges = []
+    for entity in val_ents:
+        val_edges += dropped_edges[entity]
+    val_graph.add_weighted_edges_from(val_edges)
+    assert len(set(val_graph.nodes()).intersection(test_ents)) == 0
+    assert len(set(graph.nodes()).intersection(test_ents)) == 0
 
     names = ('valid', 'test')
 
@@ -355,8 +367,8 @@ def drop_entities(triples_file, train_size=0.8, valid_size=0.1, test_size=0.1):
         with open(osp.join(dirname, f'{set_name}-{basename}'), 'w') as file:
             for entity in entity_set:
                 triples = dropped_edges[entity]
-                for t in triples:
-                    file.write(' '.join(t) + '\n')
+                for head, tail, rel in triples:
+                    file.write(f'{head} {rel} {tail}\n')
 
         with open(osp.join(dirname, f'{set_name}-ents.txt'), 'w') as file:
             file.writelines('\n'.join(entity_set))
@@ -365,6 +377,8 @@ def drop_entities(triples_file, train_size=0.8, valid_size=0.1, test_size=0.1):
         for head, tail, rel in graph.edges(data=True):
             train_file.write(f'{head} {rel["weight"]} {tail}\n')
 
+    print(f'Dropped {len(val_ents):,} entities for validation'
+          f' and {len(test_ents):,} for test.')
     print(f'Saved output files to {dirname}/')
 
 
