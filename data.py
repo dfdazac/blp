@@ -74,7 +74,7 @@ class GraphDataset(Dataset):
 
         self.num_ents = len(entities)
         self.num_rels = len(relations)
-        self.entities = torch.tensor(list(ent_ids.values()))
+        self.entities = torch.tensor([ent_ids[ent] for ent in entities])
         self.num_triples = self.triples.shape[0]
         self.maps_path = maps_path
 

@@ -1,18 +1,4 @@
-import os
-from sacred import Experiment
-from sacred.observers import MongoObserver
 import torch
-
-
-def create_experiment():
-    ex = Experiment()
-    # Set up database logs
-    uri = os.environ.get('MLAB_URI')
-    database = os.environ.get('MLAB_DB')
-    if all([uri, database]):
-        ex.observers.append(MongoObserver(uri, database))
-
-    return ex
 
 
 def hit_at_k(predictions, ground_truth_idx, k=10):

@@ -1,34 +1,37 @@
-import os.path as osp
+import os
 import torch
 from torch.utils.data import DataLoader
 from torch.optim import Adam
 from sacred.run import Run
 from logging import Logger
+from sacred import Experiment
+from sacred.observers import MongoObserver
 from transformers import AlbertTokenizer, get_linear_schedule_with_warmup
 
-from data import GraphDataset, TextGraphDataset
-from graph import TransE, BERTransE, RelTransE
-from text import SummaryModel, EntityAligner
+from data import TextGraphDataset
+from models import TransE, BERTransE, RelTransE
 import utils
 
 OUT_PATH = 'output/'
-
-ex = utils.create_experiment()
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
+ex = Experiment()
+# Set up database logs
+uri = os.environ.get('MLAB_URI')
+database = os.environ.get('MLAB_DB')
+if all([uri, database]):
+    ex.observers.append(MongoObserver(uri, database))
 
 
 @ex.config
 def config():
-    dim = 100
+    encoder_name = 'albert-large-v2'
+    dim = 128
     lr = 1e-5
-    margin = 5
+    margin = 1
     p_norm = 1
     max_epochs = 500
-    pooling = 'mean'
     num_workers = 4
-    encoder_name = 'albert-base-v2'
-    tune_summaries = True
-    add_embs = False
 
 
 @ex.capture
@@ -89,26 +92,24 @@ def eval_link_prediction(model, loader, epoch, _run: Run, _log: Logger,
     _run.log_scalar(f'{prefix}_hits@10', hits, epoch)
 
 
-@ex.command
+@ex.automain
 def link_prediction(dim, lr, margin, p_norm, max_epochs, encoder_name,
                     num_workers, _run: Run, _log: Logger):
     tokenizer = AlbertTokenizer.from_pretrained(encoder_name)
-    dataset = TextGraphDataset(triples_file='data/wikifb15k-237/train.txt',
+    dataset = TextGraphDataset('data/wikifb15k-237/train-triples.txt',
                                ents_file='data/wikifb15k-237/entities.txt',
                                rels_file='data/wikifb15k-237/relations.txt',
                                text_file='data/wikifb15k-237/descriptions.txt',
                                tokenizer=tokenizer)
     train_loader = DataLoader(dataset, batch_size=8, shuffle=True,
-                              collate_fn=dataset.negative_sampling,
+                              collate_fn=dataset.collate_text,
                               num_workers=num_workers)
     train_eval_loader = DataLoader(dataset, batch_size=128)
 
-    valid_data = TextGraphDataset('data/wikifb15k-237/valid.txt',
-                                  text_data=dataset.text_data)
+    valid_data = TextGraphDataset('data/wikifb15k-237/valid-triples.txt')
     valid_loader = DataLoader(valid_data, batch_size=128)
 
-    test_data = TextGraphDataset('data/wikifb15k-237/test.txt',
-                                 text_data=dataset.text_data)
+    test_data = TextGraphDataset('data/wikifb15k-237/test-triples.txt')
     test_loader = DataLoader(test_data, batch_size=128)
 
     model = BERTransE(dataset.num_ents, dataset.num_rels, dim, encoder_name,
@@ -153,132 +154,3 @@ def link_prediction(dim, lr, margin, p_norm, max_epochs, encoder_name,
 
     _log.info('Evaluating on test set...')
     eval_link_prediction(model, test_loader, max_epochs, prefix='test')
-
-
-@ex.capture
-def get_entity_summaries(dataset, pooling, _run: Run, _log: Logger):
-    """Load pretrained entity summaries"""
-    summarizer = SummaryModel(pooling).to(device)
-    emb_dim = summarizer.encoder.config.hidden_size
-    batch_size = 256
-
-    all_ents = torch.arange(dataset.num_ents)
-    ent_summaries = torch.zeros((dataset.num_ents, emb_dim)).to(device)
-
-    _log.info('Loading pretrained entity summaries...')
-    for i in range(0, dataset.num_ents, batch_size):
-        # Get a batch of entity IDs
-        batch_ents = all_ents[i:i + batch_size]
-        # Get their corresponding descriptions
-        tokens, masks = dataset.get_entity_descriptions(batch_ents)
-        # Encode with BERT and store result
-        batch_emb = summarizer(tokens.to(device), masks.to(device))
-        ent_summaries[i:i + batch_size] = batch_emb
-
-        if i % batch_size == 0:
-            _log.info(f'[{i + 1}/{dataset.num_ents}]')
-
-    torch.save(ent_summaries, osp.join(OUT_PATH, f'summaries-{_run._id}.pt'))
-
-    return ent_summaries
-
-
-@ex.automain
-def train_align(lr, margin, p_norm, max_epochs, pooling, tune_summaries,
-                add_embs, num_workers, _run: Run, _log: Logger):
-
-    tokenizer = AlbertTokenizer.from_pretrained('albert-base-v2')
-    dataset = TextGraphDataset(triples_file='data/wikifb15k-237/train.txt',
-                               ents_file='data/wikifb15k-237/entities.txt',
-                               rels_file='data/wikifb15k-237/relations.txt',
-                               text_file='data/wikifb15k-237/descriptions.txt',
-                               tokenizer=tokenizer)
-
-    loader = DataLoader(dataset, batch_size=256, shuffle=True,
-                        collate_fn=dataset.graph_negative_sampling,
-                        num_workers=num_workers)
-    summaries = torch.load('output/summaries-64.pt', map_location='cpu')
-    summaries = summaries.to(device)
-    # get_entity_summaries(dataset, pooling)
-
-    aligner = EntityAligner(summaries if tune_summaries else None,
-                            add_embs).to(device)
-    graph_model = RelTransE(dataset.num_rels, aligner.dim,
-                            margin, p_norm).to(device)
-
-    optimizer = Adam([{'params': aligner.parameters()},
-                      {'params': graph_model.parameters()}], lr=lr)
-    total_steps = max_epochs
-    warmup = int(0.1 * total_steps)
-    scheduler = get_linear_schedule_with_warmup(optimizer,
-                                                num_warmup_steps=warmup,
-                                                num_training_steps=total_steps)
-
-    num_train_ents = max_epochs
-    num_val_ents = 1000
-    for i in range(num_train_ents):
-        # Get entity description
-        ent_id = torch.tensor([i], dtype=torch.long)
-        tokens, mask = dataset.get_entity_descriptions(ent_id)
-        tokens = tokens.to(device)
-        mask = mask.to(device)
-
-        # Use alignment model to obtain entity embeddings
-        ent_embs, alignments = aligner(tokens, mask, summaries)
-
-        # Run 1 epoch of TransE, accumulating gradients
-        train_loss = 0
-        for step, data in enumerate(loader):
-            loss = graph_model(*[tensor.to(device) for tensor in data],
-                               ent_embs, alignments)
-
-            loss.backward(retain_graph=True)
-
-            train_loss += loss.item()
-
-            if step % 200 == 0:
-                _log.info(f'Entity {i + 1}/{num_train_ents} '
-                          f'[{step}/{len(loader)}]: {loss.item():.6f}')
-                _run.log_scalar('batch_loss', loss.item())
-
-        optimizer.step()
-        optimizer.zero_grad()
-        scheduler.step()
-
-        _run.log_scalar('train_loss', train_loss / len(loader), i)
-
-        # Save parameters
-        torch.save(aligner.state_dict(),
-                   osp.join(OUT_PATH, f'aligner-{_run._id}.pt'))
-
-        torch.save(graph_model.state_dict(),
-                   osp.join(OUT_PATH, f'transe-{_run._id}.pt'))
-
-        # Evaluate
-        _log.info('Validating first token accuracy...')
-        with torch.no_grad():
-            accuracy = 0.0
-            count = 0
-            j = num_train_ents
-            batch_size = 32
-            while j < num_train_ents + num_val_ents:
-                # Get entity description
-                ent_id = torch.arange(j, j + batch_size)
-                tokens, mask = dataset.get_entity_descriptions(ent_id)
-                tokens = tokens.to(device)
-                mask = mask.to(device)
-
-                # Use alignment model to obtain entity embeddings
-                ent_embs, alignments = aligner(tokens, mask, summaries)
-                # Get alignment with highest score for first token
-                pred_ent = torch.argmax(alignments[:, 1], dim=-1).cpu()
-                count += batch_size
-
-                accuracy += torch.sum(ent_id == pred_ent).item()
-
-                j += batch_size
-
-            accuracy = 100 * accuracy/count
-
-        _log.info(f'Validation - first token accuracy: {accuracy:.2f}%')
-        _run.log_scalar('valid-acc', accuracy, i)
