@@ -9,7 +9,7 @@ from sacred.observers import MongoObserver
 from transformers import AlbertTokenizer, get_linear_schedule_with_warmup
 
 from data import TextGraphDataset
-from models import TransE, BERTransE, RelTransE
+from models import BED
 import utils
 
 OUT_PATH = 'output/'
@@ -25,9 +25,11 @@ if all([uri, database]):
 
 @ex.config
 def config():
-    encoder_name = 'albert-large-v2'
+    encoder_name = 'albert-base-v2'
+    max_len = 32
     dim = 128
     lr = 1e-5
+    batch_size = 8
     margin = 1
     p_norm = 1
     max_epochs = 500
@@ -93,31 +95,33 @@ def eval_link_prediction(model, loader, epoch, _run: Run, _log: Logger,
 
 
 @ex.automain
-def link_prediction(dim, lr, margin, p_norm, max_epochs, encoder_name,
+def link_prediction(dim, lr, max_len, batch_size, max_epochs, encoder_name,
                     num_workers, _run: Run, _log: Logger):
     tokenizer = AlbertTokenizer.from_pretrained(encoder_name)
     dataset = TextGraphDataset('data/wikifb15k-237/train-triples.txt',
                                ents_file='data/wikifb15k-237/entities.txt',
                                rels_file='data/wikifb15k-237/relations.txt',
                                text_file='data/wikifb15k-237/descriptions.txt',
+                               max_len=max_len, neg_samples=32,
                                tokenizer=tokenizer)
-    train_loader = DataLoader(dataset, batch_size=8, shuffle=True,
+    train_loader = DataLoader(dataset, batch_size=batch_size, shuffle=True,
                               collate_fn=dataset.collate_text,
                               num_workers=num_workers)
     train_eval_loader = DataLoader(dataset, batch_size=128)
 
-    valid_data = TextGraphDataset('data/wikifb15k-237/valid-triples.txt')
+    valid_data = TextGraphDataset('data/wikifb15k-237/valid-triples.txt',
+                                  max_len=max_len)
     valid_loader = DataLoader(valid_data, batch_size=128)
 
-    test_data = TextGraphDataset('data/wikifb15k-237/test-triples.txt')
+    test_data = TextGraphDataset('data/wikifb15k-237/test-triples.txt',
+                                 max_len=max_len)
     test_loader = DataLoader(test_data, batch_size=128)
 
-    model = BERTransE(dataset.num_ents, dataset.num_rels, dim, encoder_name,
-                      margin=margin, p_norm=p_norm).to(device)
+    model = BED(dataset.num_rels, dim, encoder_name).to(device)
 
-    optimizer = Adam([{'params': model.bert.albert.parameters(), 'lr': lr},
-                      {'params': model.bert.classifier.parameters()},
-                      {'params': model.rel_emb.parameters()}],
+    optimizer = Adam([{'params': model.encoder.parameters(), 'lr': lr},
+                      {'params': model.rel_emb.parameters()},
+                      {'params': model.enc_linear.parameters()}],
                      lr=1e-4)
 
     total_steps = len(train_loader) * max_epochs
@@ -143,14 +147,14 @@ def link_prediction(dim, lr, margin, p_norm, max_epochs, encoder_name,
                           f'[{step}/{len(train_loader)}]: {loss.item():.6f}')
                 _run.log_scalar('batch_loss', loss.item())
 
-        _run.log_scalar('train_loss', train_loss/len(train_loader), epoch)
-
-        _log.info('Evaluating on sample of training set...')
-        eval_link_prediction(model, train_eval_loader, epoch, prefix='train',
-                             max_num_batches=len(valid_loader))
-
-        _log.info('Evaluating on validation set...')
-        eval_link_prediction(model, valid_loader, epoch, prefix='valid')
-
-    _log.info('Evaluating on test set...')
-    eval_link_prediction(model, test_loader, max_epochs, prefix='test')
+    #     _run.log_scalar('train_loss', train_loss/len(train_loader), epoch)
+    #
+    #     _log.info('Evaluating on sample of training set...')
+    #     eval_link_prediction(model, train_eval_loader, epoch, prefix='train',
+    #                          max_num_batches=len(valid_loader))
+    #
+    #     _log.info('Evaluating on validation set...')
+    #     eval_link_prediction(model, valid_loader, epoch, prefix='valid')
+    #
+    # _log.info('Evaluating on test set...')
+    # eval_link_prediction(model, test_loader, max_epochs, prefix='test')

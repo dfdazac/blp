@@ -128,7 +128,7 @@ class TextGraphDataset(GraphDataset):
             the respective entity description.
     """
     def __init__(self, triples_file, ents_file=None, rels_file=None,
-                 text_file=None, max_len=None,
+                 text_file=None, max_len=None, neg_samples=1,
                  tokenizer: transformers.PreTrainedTokenizer=None):
         super().__init__(triples_file, ents_file, rels_file)
 
@@ -174,6 +174,8 @@ class TextGraphDataset(GraphDataset):
                 self.name_data[ent_id, -1] = name_len
                 self.text_data[ent_id, -1] = text_len
 
+        self.neg_samples = neg_samples
+
     @staticmethod
     def get_batch_data(data, ent_ids):
         # Convert ent_ids to tensor of token IDs and sequence length
@@ -218,7 +220,23 @@ class TextGraphDataset(GraphDataset):
         """
         pos_pairs, rels = torch.stack(data_list).split(2, dim=1)
         tokens, mask, _ = self.get_batch_data(self.text_data, pos_pairs)
-        return tokens, mask, rels
+
+        # Obtain indices for negative sampling within the batch
+        batch_size = tokens.shape[0]
+        num_ents = batch_size * 2
+        idx = torch.arange(num_ents).reshape(batch_size, 2)
+        zeros = torch.zeros(batch_size, 2)
+
+        head_weights = torch.ones(batch_size, num_ents, dtype=torch.float)
+        head_weights.scatter_(1, idx, zeros)
+        head_idx = head_weights.multinomial(self.neg_samples, replacement=True)
+
+        tail_weights = (head_weights < 1).float()
+        tail_idx = tail_weights.multinomial(self.neg_samples, replacement=True)
+
+        neg_idx = torch.stack((head_idx, tail_idx), dim=1)
+
+        return tokens, mask, rels, neg_idx
 
     def negative_sampling(self, data_list):
         pos_pairs, neg_pairs, rels = super().negative_sampling(data_list)
