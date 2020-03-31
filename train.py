@@ -38,46 +38,59 @@ def config():
 
 @ex.capture
 @torch.no_grad()
-def eval_link_prediction(model, loader, epoch, _run: Run, _log: Logger,
+def eval_link_prediction(model, triples_loader, text_dataset, entities,
+                         epoch, _run: Run, _log: Logger,
                          prefix='', max_num_batches=None):
     hits = 0.0
     mrr = 0.0
-
-    all_ents = torch.arange(end=model.num_entities, device=device).unsqueeze(0)
-
+    num_entities = entities.shape[0]
+    ent2idx = utils.make_ent2idx(entities).to(device)
     # For TextGraphDataset, preload entity embeddings from their text
     # descriptions, using the text encoder. This is done on mini-batches
     # because entity descriptions have arbitrary length.
-    if isinstance(loader.dataset, TextGraphDataset):
+    if isinstance(triples_loader.dataset, TextGraphDataset):
         # Create embedding lookup table
-        ent_emb = torch.zeros((model.num_entities, model.dim),
+        ent_emb = torch.zeros((num_entities, model.dim),
                               dtype=torch.float)
         idx = 0
-        while idx < model.num_entities:
+        while idx < num_entities:
             # Get a batch of entity IDs
-            batch_ents = all_ents[0][idx:idx + loader.batch_size]
+            batch_ents = entities[idx:idx + triples_loader.batch_size]
             # Get their corresponding descriptions
-            tokens, masks = loader.dataset.get_entity_descriptions(batch_ents)
+            tokens, mask, _ = text_dataset.get_entity_description(batch_ents)
             # Encode with BERT and store result
-            batch_emb = model.ent_emb(tokens.to(device), masks.to(device))
-            ent_emb[idx:idx + loader.batch_size] = batch_emb
-            idx += loader.batch_size
+            batch_emb = model.encode_description(tokens.to(device),
+                                                 mask.to(device))
+            ent_emb[idx:idx + batch_ents.shape[0]] = batch_emb
+            idx += triples_loader.batch_size
 
-        ent_emb = ent_emb.to(device)
+        ent_emb = ent_emb.unsqueeze(0).to(device)
     else:
         ent_emb = None
 
     batch_count = 0
-    for i, triples in enumerate(loader):
+    for i, triples in enumerate(triples_loader):
         if max_num_batches is not None and i == max_num_batches:
             break
 
         triples = triples.to(device)
         head, tail, rel = torch.chunk(triples, chunks=3, dim=1)
 
-        # Check all possible heads and tails
-        heads_predictions = model.energy(all_ents, tail, rel, ent_emb)
-        tails_predictions = model.energy(head, all_ents, rel, ent_emb)
+        # Map entity IDs to positions in ent_emb
+        head = ent2idx[head]
+        tail = ent2idx[tail]
+
+        assert head.min() >= 0
+        assert tail.min() >= 0
+
+        # Embed triple
+        head_embs = ent_emb.squeeze()[head]
+        tail_embs = ent_emb.squeeze()[tail]
+        rel_embs = model.rel_emb(rel)
+
+        # Score all possible heads and tails
+        heads_predictions = model.energy(ent_emb, tail_embs, rel_embs)
+        tails_predictions = model.energy(head_embs, ent_emb, rel_embs)
 
         pred_ents = torch.cat((tails_predictions, heads_predictions))
         true_ents = torch.cat((tail, head))
@@ -106,7 +119,7 @@ def link_prediction(dim, lr, max_len, batch_size, max_epochs, encoder_name,
                                tokenizer=tokenizer)
     train_loader = DataLoader(dataset, batch_size=batch_size, shuffle=True,
                               collate_fn=dataset.collate_text,
-                              num_workers=num_workers)
+                              num_workers=num_workers, drop_last=True)
     train_eval_loader = DataLoader(dataset, batch_size=128)
 
     valid_data = TextGraphDataset('data/wikifb15k-237/valid-triples.txt',
@@ -116,6 +129,14 @@ def link_prediction(dim, lr, max_len, batch_size, max_epochs, encoder_name,
     test_data = TextGraphDataset('data/wikifb15k-237/test-triples.txt',
                                  max_len=max_len)
     test_loader = DataLoader(test_data, batch_size=128)
+
+    train_ent = set(dataset.entities.tolist())
+    train_val_ent = set(valid_data.entities.tolist()).union(train_ent)
+    train_val_test_ent = set(test_data.entities.tolist()).union(train_val_ent)
+
+    train_ent = torch.tensor(list(train_ent))
+    train_val_ent = torch.tensor(list(train_val_ent))
+    train_val_test_ent = torch.tensor(list(train_val_test_ent))
 
     model = BED(dataset.num_rels, dim, encoder_name).to(device)
 
@@ -147,14 +168,17 @@ def link_prediction(dim, lr, max_len, batch_size, max_epochs, encoder_name,
                           f'[{step}/{len(train_loader)}]: {loss.item():.6f}')
                 _run.log_scalar('batch_loss', loss.item())
 
-    #     _run.log_scalar('train_loss', train_loss/len(train_loader), epoch)
-    #
-    #     _log.info('Evaluating on sample of training set...')
-    #     eval_link_prediction(model, train_eval_loader, epoch, prefix='train',
-    #                          max_num_batches=len(valid_loader))
-    #
-    #     _log.info('Evaluating on validation set...')
-    #     eval_link_prediction(model, valid_loader, epoch, prefix='valid')
-    #
-    # _log.info('Evaluating on test set...')
-    # eval_link_prediction(model, test_loader, max_epochs, prefix='test')
+        _run.log_scalar('train_loss', train_loss/len(train_loader), epoch)
+
+        _log.info('Evaluating on sample of training set...')
+        eval_link_prediction(model, train_eval_loader, dataset, train_ent,
+                             epoch, prefix='train',
+                             max_num_batches=len(valid_loader))
+
+        _log.info('Evaluating on validation set...')
+        eval_link_prediction(model, valid_loader, dataset, train_val_ent,
+                             epoch, prefix='valid')
+
+    _log.info('Evaluating on test set...')
+    eval_link_prediction(model, test_loader, dataset, train_val_test_ent,
+                         max_epochs, prefix='test')

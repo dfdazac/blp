@@ -192,7 +192,7 @@ class TextGraphDataset(GraphDataset):
 
         return tokens, masks, seq_len
 
-    def get_entity_descriptions(self, ent_ids):
+    def get_entity_name_description(self, ent_ids):
         """Retrieve a batch of sequences (entity descriptions),
         for each entity in the input.
 
@@ -213,16 +213,26 @@ class TextGraphDataset(GraphDataset):
 
         return name_tok, name_mask, name_len, text_tok, text_mask, text_len
 
+    def get_entity_description(self, ent_ids):
+        text_tok, text_mask, text_len = self.get_batch_data(self.text_data,
+                                                            ent_ids)
+
+        return text_tok, text_mask, text_len
+
     def collate_text(self, data_list):
         """Given a batch of triples, return it in the form of
         entity descriptions, and the relation types between them.
         Use as a collate_fn for a DataLoader.
         """
+        batch_size = len(data_list)
+        if batch_size <= 1:
+            raise ValueError('collate_text can only work with batch sizes'
+                             ' larger than 1.')
+
         pos_pairs, rels = torch.stack(data_list).split(2, dim=1)
         tokens, mask, _ = self.get_batch_data(self.text_data, pos_pairs)
 
         # Obtain indices for negative sampling within the batch
-        batch_size = tokens.shape[0]
         num_ents = batch_size * 2
         idx = torch.arange(num_ents).reshape(batch_size, 2)
         zeros = torch.zeros(batch_size, 2)
@@ -243,7 +253,7 @@ class TextGraphDataset(GraphDataset):
         split = pos_pairs.shape[0]
         pairs = torch.cat((pos_pairs, neg_pairs))
 
-        tokens, masks = self.get_entity_descriptions(pairs)
+        tokens, masks = self.get_entity_name_description(pairs)
 
         # Recover positive/negative split
         pos_pairs_tokens, neg_pairs_tokens = tokens.split(split, dim=0)
