@@ -5,7 +5,7 @@ from transformers import AlbertModel
 
 
 class BED(nn.Module):
-    def __init__(self, num_relations, dim, encoder_name):
+    def __init__(self, num_relations, dim, margin, encoder_name):
         super().__init__()
         self.encoder = AlbertModel.from_pretrained(encoder_name,
                                                    output_attentions=False,
@@ -17,6 +17,7 @@ class BED(nn.Module):
         nn.init.kaiming_uniform_(self.rel_emb.weight, nonlinearity='linear')
 
         self.dim = dim
+        self.margin = margin
 
     def ent_emb(self, tokens, masks):
         return F.normalize(self.encoder(tokens, masks)[0], dim=-1)
@@ -50,7 +51,7 @@ class BED(nn.Module):
         head, tail = torch.chunk(neg_embs, chunks=2, dim=1)
         neg_energy = self.energy(head.squeeze(), tail.squeeze(), rels)
 
-        loss = 1 + pos_energy - neg_energy
+        loss = self.margin + pos_energy - neg_energy
         loss[loss < 0] = 0
 
         return loss.mean()

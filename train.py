@@ -1,4 +1,5 @@
 import os
+import os.path as osp
 import torch
 from torch.utils.data import DataLoader
 from torch.optim import Adam
@@ -29,10 +30,10 @@ def config():
     max_len = 32
     dim = 128
     lr = 1e-5
-    batch_size = 8
+    batch_size = 64
     margin = 1
     p_norm = 1
-    max_epochs = 500
+    max_epochs = 20
     num_workers = 4
 
 
@@ -106,10 +107,12 @@ def eval_link_prediction(model, triples_loader, text_dataset, entities,
     _run.log_scalar(f'{prefix}_mrr', mrr, epoch)
     _run.log_scalar(f'{prefix}_hits@10', hits, epoch)
 
+    return ent_emb
+
 
 @ex.automain
-def link_prediction(dim, lr, max_len, batch_size, max_epochs, encoder_name,
-                    num_workers, _run: Run, _log: Logger):
+def link_prediction(dim, margin, lr, max_len, batch_size, max_epochs,
+                    encoder_name, num_workers, _run: Run, _log: Logger):
     tokenizer = AlbertTokenizer.from_pretrained(encoder_name)
     dataset = TextGraphDataset('data/wikifb15k-237/train-triples.txt',
                                ents_file='data/wikifb15k-237/entities.txt',
@@ -138,7 +141,7 @@ def link_prediction(dim, lr, max_len, batch_size, max_epochs, encoder_name,
     train_val_ent = torch.tensor(list(train_val_ent))
     train_val_test_ent = torch.tensor(list(train_val_test_ent))
 
-    model = BED(dataset.num_rels, dim, encoder_name).to(device)
+    model = BED(dataset.num_rels, dim, margin, encoder_name).to(device)
 
     optimizer = Adam([{'params': model.encoder.parameters(), 'lr': lr},
                       {'params': model.rel_emb.parameters()},
@@ -180,5 +183,10 @@ def link_prediction(dim, lr, max_len, batch_size, max_epochs, encoder_name,
                              epoch, prefix='valid')
 
     _log.info('Evaluating on test set...')
-    eval_link_prediction(model, test_loader, dataset, train_val_test_ent,
-                         max_epochs, prefix='test')
+    ent_emb = eval_link_prediction(model, test_loader, dataset,
+                                   train_val_test_ent, max_epochs,
+                                   prefix='test')
+
+    torch.save(model.state_dict(), osp.join(OUT_PATH, f'bed-{_run._id}.pt'))
+    torch.save(ent_emb, osp.join(OUT_PATH, f'ent_emb-{_run._id}.pt'))
+    torch.save(train_val_test_ent, osp.join(OUT_PATH, f'ents-{_run._id}.pt'))
