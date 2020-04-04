@@ -68,7 +68,6 @@ def hit_at_k(predictions, ground_truth_idx, k=10):
 
     Returns: float, Hits@K score
     """
-
     _, indices = predictions.topk(k=k, largest=False)
     return (indices == ground_truth_idx).sum(dim=1).float().mean().item()
 

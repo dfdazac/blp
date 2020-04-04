@@ -41,8 +41,11 @@ def config():
 @ex.capture
 @torch.no_grad()
 def eval_link_prediction(model, triples_loader, text_dataset, entities,
-                         graph, epoch, _run: Run, _log: Logger,
-                         prefix='', max_num_batches=None):
+                         epoch, _run: Run, _log: Logger,
+                         prefix='', max_num_batches=None,
+                         filtering_graph=None):
+    compute_filtered = filtering_graph is not None
+
     hits = 0.0
     mrr = 0.0
     mrr_filt = 0.0
@@ -73,11 +76,6 @@ def eval_link_prediction(model, triples_loader, text_dataset, entities,
         if max_num_batches is not None and i == max_num_batches:
             break
 
-        heads_filter, tails_filter = utils.get_triple_filters(triples,
-                                                              graph,
-                                                              num_entities,
-                                                              ent2idx)
-
         heads, tails, rels = torch.chunk(triples, chunks=3, dim=1)
         # Map entity IDs to positions in ent_emb
         heads = ent2idx[heads].to(device)
@@ -97,15 +95,19 @@ def eval_link_prediction(model, triples_loader, text_dataset, entities,
 
         pred_ents = torch.cat((heads_predictions, tails_predictions))
         true_ents = torch.cat((heads, tails))
-        filter_mask = torch.cat((heads_filter, tails_filter)).to(device)
 
         hits += utils.hit_at_k(pred_ents, true_ents, k=10)
         mrr += utils.mrr(pred_ents, true_ents)
 
-        # Filter entities by assigning them the maximum energy in the batch
-        pred_ents[filter_mask] = pred_ents.max() + 1.0
-        hits_filt += utils.hit_at_k(pred_ents, true_ents, k=10)
-        mrr_filt += utils.mrr(pred_ents, true_ents)
+        if compute_filtered:
+            filters = utils.get_triple_filters(triples, filtering_graph,
+                                               num_entities, ent2idx)
+            heads_filter, tails_filter = filters
+            # Filter entities by assigning them the maximum energy in the batch
+            filter_mask = torch.cat((heads_filter, tails_filter)).to(device)
+            pred_ents[filter_mask] = pred_ents.max() + 1.0
+            hits_filt += utils.hit_at_k(pred_ents, true_ents, k=10)
+            mrr_filt += utils.mrr(pred_ents, true_ents)
 
         batch_count += 1
 
@@ -114,12 +116,17 @@ def eval_link_prediction(model, triples_loader, text_dataset, entities,
     hits_filt = hits_filt / batch_count
     mrr_filt = mrr_filt / batch_count
 
-    _log.info(f'{prefix} mrr: {mrr:.4f}  mrr_filt: {mrr_filt:.4f}'
-              f'  hits@10: {hits:.4f}  hits@10_filt: {hits_filt:.4f}')
+    log_str = f'{prefix} mrr: {mrr:.4f}  hits@10: {hits:.4f}'
+    if compute_filtered:
+        log_str += f'  mrr_filt: {mrr_filt:.4f}  hits@10_filt: {hits_filt:.4f}'
+    _log.info(log_str)
+
     _run.log_scalar(f'{prefix}_mrr', mrr, epoch)
     _run.log_scalar(f'{prefix}_hits@10', hits, epoch)
-    _run.log_scalar(f'{prefix}_mrr_filt', mrr_filt, epoch)
-    _run.log_scalar(f'{prefix}_hits@10_filt', hits_filt, epoch)
+
+    if compute_filtered:
+        _run.log_scalar(f'{prefix}_mrr_filt', mrr_filt, epoch)
+        _run.log_scalar(f'{prefix}_hits@10_filt', hits_filt, epoch)
 
     return ent_emb
 
@@ -128,16 +135,16 @@ def eval_link_prediction(model, triples_loader, text_dataset, entities,
 def link_prediction(dim, margin, lr, max_len, batch_size, max_epochs,
                     encoder_name, num_workers, _run: Run, _log: Logger):
     tokenizer = AlbertTokenizer.from_pretrained(encoder_name)
-    dataset = TextGraphDataset('data/wikifb15k-237/train-triples.txt',
-                               ents_file='data/wikifb15k-237/entities.txt',
-                               rels_file='data/wikifb15k-237/relations.txt',
-                               text_file='data/wikifb15k-237/descriptions.txt',
-                               max_len=max_len, neg_samples=32,
-                               tokenizer=tokenizer)
-    train_loader = DataLoader(dataset, batch_size=batch_size, shuffle=True,
-                              collate_fn=dataset.collate_text,
+    train_data = TextGraphDataset('data/wikifb15k-237/train-triples.txt',
+                                  ents_file='data/wikifb15k-237/entities.txt',
+                                  rels_file='data/wikifb15k-237/relations.txt',
+                                  text_file='data/wikifb15k-237/descriptions.txt',
+                                  max_len=max_len, neg_samples=32,
+                                  tokenizer=tokenizer)
+    train_loader = DataLoader(train_data, batch_size=batch_size, shuffle=True,
+                              collate_fn=train_data.collate_text,
                               num_workers=num_workers, drop_last=True)
-    train_eval_loader = DataLoader(dataset, batch_size=128)
+    train_eval_loader = DataLoader(train_data, batch_size=128)
 
     valid_data = TextGraphDataset('data/wikifb15k-237/valid-triples.txt',
                                   max_len=max_len)
@@ -147,13 +154,14 @@ def link_prediction(dim, margin, lr, max_len, batch_size, max_epochs,
                                  max_len=max_len)
     test_loader = DataLoader(test_data, batch_size=128)
 
+    # Build graph with all triples to compute filtered metrics
     graph = nx.MultiDiGraph()
-    all_triples = torch.cat((dataset.triples,
+    all_triples = torch.cat((train_data.triples,
                              valid_data.triples,
                              test_data.triples))
     graph.add_weighted_edges_from(all_triples.tolist())
 
-    train_ent = set(dataset.entities.tolist())
+    train_ent = set(train_data.entities.tolist())
     train_val_ent = set(valid_data.entities.tolist()).union(train_ent)
     train_val_test_ent = set(test_data.entities.tolist()).union(train_val_ent)
 
@@ -161,7 +169,7 @@ def link_prediction(dim, margin, lr, max_len, batch_size, max_epochs,
     train_val_ent = torch.tensor(list(train_val_ent))
     train_val_test_ent = torch.tensor(list(train_val_test_ent))
 
-    model = BED(dataset.num_rels, dim, margin, encoder_name).to(device)
+    model = BED(train_data.num_rels, dim, margin, encoder_name).to(device)
 
     optimizer = Adam([{'params': model.encoder.parameters(), 'lr': lr},
                       {'params': model.rel_emb.parameters()},
@@ -191,23 +199,25 @@ def link_prediction(dim, margin, lr, max_len, batch_size, max_epochs,
                           f'[{step}/{len(train_loader)}]: {loss.item():.6f}')
                 _run.log_scalar('batch_loss', loss.item())
 
-            break
-
         _run.log_scalar('train_loss', train_loss/len(train_loader), epoch)
 
         _log.info('Evaluating on sample of training set...')
-        eval_link_prediction(model, train_eval_loader, dataset, train_ent,
-                             graph, epoch, prefix='train',
+        eval_link_prediction(model, train_eval_loader, train_data, train_ent,
+                             epoch, prefix='train',
                              max_num_batches=len(valid_loader))
 
         _log.info('Evaluating on validation set...')
-        eval_link_prediction(model, valid_loader, dataset, train_val_ent,
-                             graph, epoch, prefix='valid')
+        eval_link_prediction(model, valid_loader, train_data, train_val_ent,
+                             epoch, prefix='valid')
+
+    _log.info('Evaluating on validation set (with filtering)...')
+    eval_link_prediction(model, valid_loader, train_data, train_val_ent,
+                         max_epochs + 1, prefix='valid', filtering_graph=graph)
 
     _log.info('Evaluating on test set...')
-    ent_emb = eval_link_prediction(model, test_loader, dataset,
-                                   graph, train_val_test_ent, max_epochs,
-                                   prefix='test')
+    ent_emb = eval_link_prediction(model, test_loader, train_data,
+                                   train_val_test_ent, graph, max_epochs + 1,
+                                   prefix='test', filtering_graph=graph)
 
     torch.save(model.state_dict(), osp.join(OUT_PATH, f'bed-{_run._id}.pt'))
     torch.save(ent_emb, osp.join(OUT_PATH, f'ent_emb-{_run._id}.pt'))
