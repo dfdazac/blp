@@ -46,10 +46,11 @@ def eval_link_prediction(model, triples_loader, text_dataset, entities,
                          filtering_graph=None):
     compute_filtered = filtering_graph is not None
 
-    hits = 0.0
+    hit_positions = [1, 3, 10]
+    hits_at_k = {pos: 0.0 for pos in hit_positions}
     mrr = 0.0
     mrr_filt = 0.0
-    hits_filt = 0.0
+    hits_at_k_filt = {pos: 0.0 for pos in hit_positions}
 
     num_entities = entities.shape[0]
     ent2idx = utils.make_ent2idx(entities)
@@ -96,7 +97,9 @@ def eval_link_prediction(model, triples_loader, text_dataset, entities,
         pred_ents = torch.cat((heads_predictions, tails_predictions))
         true_ents = torch.cat((heads, tails))
 
-        hits += utils.hit_at_k(pred_ents, true_ents, k=10)
+        hits = utils.hit_at_k(pred_ents, true_ents, hit_positions)
+        for j, h in enumerate(hits):
+            hits_at_k[hit_positions[j]] += h
         mrr += utils.mrr(pred_ents, true_ents)
 
         if compute_filtered:
@@ -106,27 +109,34 @@ def eval_link_prediction(model, triples_loader, text_dataset, entities,
             # Filter entities by assigning them the maximum energy in the batch
             filter_mask = torch.cat((heads_filter, tails_filter)).to(device)
             pred_ents[filter_mask] = pred_ents.max() + 1.0
-            hits_filt += utils.hit_at_k(pred_ents, true_ents, k=10)
+            hits_filt = utils.hit_at_k(pred_ents, true_ents, hit_positions)
+            for j, h in enumerate(hits_filt):
+                hits_at_k_filt[hit_positions[j]] += h
             mrr_filt += utils.mrr(pred_ents, true_ents)
 
         batch_count += 1
 
-    hits = hits / batch_count
+    for hits_dict in (hits_at_k, hits_at_k_filt):
+        for k in hits_dict:
+            hits_dict[k] /= batch_count
+
     mrr = mrr / batch_count
-    hits_filt = hits_filt / batch_count
     mrr_filt = mrr_filt / batch_count
 
-    log_str = f'{prefix} mrr: {mrr:.4f}  hits@10: {hits:.4f}'
-    if compute_filtered:
-        log_str += f'  mrr_filt: {mrr_filt:.4f}  hits@10_filt: {hits_filt:.4f}'
-    _log.info(log_str)
-
+    log_str = f'{prefix} mrr: {mrr:.4f}  '
     _run.log_scalar(f'{prefix}_mrr', mrr, epoch)
-    _run.log_scalar(f'{prefix}_hits@10', hits, epoch)
+    for k, value in hits_at_k.items():
+        log_str += f'hits@{k}: {value:.4f}  '
+        _run.log_scalar(f'{prefix}_hits@{k}', value, epoch)
 
     if compute_filtered:
+        log_str += f'mrr_filt: {mrr_filt:.4f}  '
         _run.log_scalar(f'{prefix}_mrr_filt', mrr_filt, epoch)
-        _run.log_scalar(f'{prefix}_hits@10_filt', hits_filt, epoch)
+        for k, value in hits_at_k_filt.items():
+            log_str += f'hits@{k}_filt: {value:.4f}  '
+            _run.log_scalar(f'{prefix}_hits@{k}_filt', value, epoch)
+
+    _log.info(log_str)
 
     return ent_emb
 
@@ -216,7 +226,7 @@ def link_prediction(dim, margin, lr, max_len, batch_size, max_epochs,
 
     _log.info('Evaluating on test set...')
     ent_emb = eval_link_prediction(model, test_loader, train_data,
-                                   train_val_test_ent, graph, max_epochs + 1,
+                                   train_val_test_ent, max_epochs + 1,
                                    prefix='test', filtering_graph=graph)
 
     torch.save(model.state_dict(), osp.join(OUT_PATH, f'bed-{_run._id}.pt'))

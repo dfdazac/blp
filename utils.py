@@ -57,19 +57,29 @@ def get_triple_filters(triples, graph, num_ents, ent2idx):
     return heads_filter, tails_filter
 
 
-def hit_at_k(predictions, ground_truth_idx, k=10):
+def hit_at_k(predictions, ground_truth_idx, hit_positions):
     """Calculates mean number of hits@k.
 
     Args:
         predictions: BxN tensor of prediction values where B is batch size
             and N number of classes.
         ground_truth_idx: Bx1 tensor with index of ground truth class
-        k: number of top K results to be considered as hits
+        hit_positions: list, containing number of top K results to be
+            considered as hits.
 
-    Returns: float, Hits@K score
+    Returns: list of float, of the same length as hit_positions, containing
+        Hits@K score.
     """
-    _, indices = predictions.topk(k=k, largest=False)
-    return (indices == ground_truth_idx).sum(dim=1).float().mean().item()
+    max_position = max(hit_positions)
+    _, indices = predictions.topk(k=max_position, largest=False)
+    hits = []
+
+    for position in hit_positions:
+        idx_at_k = indices[:, :position]
+        hits_at_k = (idx_at_k == ground_truth_idx).sum(dim=1).float().mean()
+        hits.append(hits_at_k.item())
+
+    return hits
 
 
 def mrr(predictions, ground_truth_idx):
