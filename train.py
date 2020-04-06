@@ -3,12 +3,12 @@ import os.path as osp
 import networkx as nx
 import torch
 from torch.utils.data import DataLoader
-from torch.optim import Adam
 from sacred.run import Run
 from logging import Logger
 from sacred import Experiment
 from sacred.observers import MongoObserver
-from transformers import AlbertTokenizer, get_linear_schedule_with_warmup
+from transformers import AlbertTokenizer, get_linear_schedule_with_warmup,\
+    AdamW
 
 from data import TextGraphDataset
 from models import BED
@@ -27,13 +27,14 @@ if all([uri, database]):
 
 @ex.config
 def config():
-    encoder_name = 'albert-base-v2'
-    max_len = 32
     dim = 128
+    rel_model = 'transe'
+    loss_fn = 'margin'
+    encoder_name = 'albert-base-v2'
+    weight_decay = 0.0
+    max_len = 32
     lr = 1e-5
     batch_size = 64
-    margin = 1
-    p_norm = 1
     max_epochs = 20
     num_workers = 4
 
@@ -138,12 +139,13 @@ def eval_link_prediction(model, triples_loader, text_dataset, entities,
 
     _log.info(log_str)
 
-    return ent_emb
+    return ent_emb, mrr
 
 
 @ex.automain
-def link_prediction(dim, margin, lr, max_len, batch_size, max_epochs,
-                    encoder_name, num_workers, _run: Run, _log: Logger):
+def link_prediction(dim, rel_model, loss_fn, encoder_name, weight_decay,
+                    max_len, lr, batch_size, max_epochs, num_workers,
+                    _run: Run, _log: Logger):
     tokenizer = AlbertTokenizer.from_pretrained(encoder_name)
     train_data = TextGraphDataset('data/wikifb15k-237/train-triples.txt',
                                   ents_file='data/wikifb15k-237/entities.txt',
@@ -179,19 +181,21 @@ def link_prediction(dim, margin, lr, max_len, batch_size, max_epochs,
     train_val_ent = torch.tensor(list(train_val_ent))
     train_val_test_ent = torch.tensor(list(train_val_test_ent))
 
-    model = BED(train_data.num_rels, dim, margin, encoder_name).to(device)
+    model = BED(dim, rel_model, loss_fn, train_data.num_rels, encoder_name)
+    model = model.to(device)
 
-    optimizer = Adam([{'params': model.encoder.parameters(), 'lr': lr},
+    optimizer = AdamW([{'params': model.encoder.parameters(), 'lr': lr},
                       {'params': model.rel_emb.parameters()},
                       {'params': model.enc_linear.parameters()}],
-                     lr=1e-4)
+                      lr=1e-4, weight_decay=weight_decay)
 
     total_steps = len(train_loader) * max_epochs
     warmup = int(0.2 * total_steps)
     scheduler = get_linear_schedule_with_warmup(optimizer,
                                                 num_warmup_steps=warmup,
                                                 num_training_steps=total_steps)
-
+    best_valid_mrr = 0.0
+    checkpoint_file = osp.join(OUT_PATH, f'bed-{_run._id}.pt')
     for epoch in range(1, max_epochs + 1):
         train_loss = 0
         for step, data in enumerate(train_loader):
@@ -217,9 +221,16 @@ def link_prediction(dim, margin, lr, max_len, batch_size, max_epochs,
                              max_num_batches=len(valid_loader))
 
         _log.info('Evaluating on validation set...')
-        eval_link_prediction(model, valid_loader, train_data, train_val_ent,
-                             epoch, prefix='valid')
+        _, val_mrr = eval_link_prediction(model, valid_loader, train_data,
+                                          train_val_ent, epoch, prefix='valid')
 
+        # Keep checkpoint of best performing model (based on raw MRR)
+        if val_mrr > best_valid_mrr:
+            best_valid_mrr = val_mrr
+            torch.save(model.state_dict(), checkpoint_file)
+
+    # Evaluate with best performing checkpoint
+    model.load_state_dict(torch.load(checkpoint_file))
     _log.info('Evaluating on validation set (with filtering)...')
     eval_link_prediction(model, valid_loader, train_data, train_val_ent,
                          max_epochs + 1, prefix='valid', filtering_graph=graph)
@@ -229,6 +240,6 @@ def link_prediction(dim, margin, lr, max_len, batch_size, max_epochs,
                                    train_val_test_ent, max_epochs + 1,
                                    prefix='test', filtering_graph=graph)
 
-    torch.save(model.state_dict(), osp.join(OUT_PATH, f'bed-{_run._id}.pt'))
+    # Save final entity embeddings obtained with trained encoder
     torch.save(ent_emb, osp.join(OUT_PATH, f'ent_emb-{_run._id}.pt'))
     torch.save(train_val_test_ent, osp.join(OUT_PATH, f'ents-{_run._id}.pt'))

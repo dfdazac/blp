@@ -5,7 +5,7 @@ from transformers import AlbertModel
 
 
 class BED(nn.Module):
-    def __init__(self, num_relations, dim, margin, encoder_name):
+    def __init__(self, dim, rel_model, loss_fn, num_relations, encoder_name):
         super().__init__()
         self.encoder = AlbertModel.from_pretrained(encoder_name,
                                                    output_attentions=False,
@@ -16,20 +16,26 @@ class BED(nn.Module):
         self.rel_emb = nn.Embedding(num_relations, dim)
         nn.init.kaiming_uniform_(self.rel_emb.weight, nonlinearity='linear')
 
-        self.dim = dim
-        self.margin = margin
+        self.normalize_embs = False
 
-    def ent_emb(self, tokens, masks):
-        return F.normalize(self.encoder(tokens, masks)[0], dim=-1)
+        if rel_model == 'transe':
+            self.score_fn = transe_score
+            self.normalize_embs = True
+        else:
+            raise ValueError(f'Unknown relational model {rel_model}.')
 
-    def energy(self, head, tail, rel):
-        return torch.norm(head + rel - tail, dim=-1, p=1)
+        if loss_fn == 'margin':
+            self.loss_fn = margin_loss
+        else:
+            raise ValueError(f'Unkown loss function {loss_fn}')
 
     def encode_description(self, tokens, mask):
         # Encode text and extract representation of [CLS] token
         embs = self.encoder(tokens, mask)[0][:, 0]
-        # TODO: Normalizing might not be required for all relational models
-        embs = F.normalize(self.enc_linear(embs), dim=-1)
+        embs = self.enc_linear(embs)
+
+        if self.normalize_embs:
+            embs = F.normalize(embs, dim=-1)
 
         return embs
 
@@ -43,15 +49,24 @@ class BED(nn.Module):
 
         # Scores for positive samples
         rels = self.rel_emb(rels)
-        head, tail = torch.chunk(embs, chunks=2, dim=1)
-        pos_energy = self.energy(head, tail, rels)
+        heads, tails = torch.chunk(embs, chunks=2, dim=1)
+        pos_scores = self.score_fn(heads, tails, rels)
 
         # Scores for negative samples
         neg_embs = embs.view(batch_size * 2, -1)[neg_idx]
-        head, tail = torch.chunk(neg_embs, chunks=2, dim=1)
-        neg_energy = self.energy(head.squeeze(), tail.squeeze(), rels)
+        heads, tails = torch.chunk(neg_embs, chunks=2, dim=1)
+        neg_scores = self.score_fn(heads.squeeze(), tails.squeeze(), rels)
 
-        loss = self.margin + pos_energy - neg_energy
-        loss[loss < 0] = 0
+        loss = self.loss_fn(pos_scores, neg_scores)
 
-        return loss.mean()
+        return loss
+
+
+def transe_score(heads, tails, rels):
+    return -torch.norm(heads + rels - tails, dim=-1, p=1)
+
+
+def margin_loss(pos_scores, neg_scores):
+    loss = 1 - pos_scores + neg_scores
+    loss[loss < 0] = 0
+    return loss.mean()
