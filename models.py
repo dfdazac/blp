@@ -22,11 +22,15 @@ class BED(nn.Module):
         if rel_model == 'transe':
             self.score_fn = transe_score
             self.normalize_embs = True
+        elif rel_model == 'distmult':
+            self.score_fn = distmult_score
         else:
             raise ValueError(f'Unknown relational model {rel_model}.')
 
         if loss_fn == 'margin':
             self.loss_fn = margin_loss
+        elif loss_fn == 'nll':
+            self.loss = nll_loss
         else:
             raise ValueError(f'Unkown loss function {loss_fn}')
 
@@ -67,7 +71,15 @@ def transe_score(heads, tails, rels):
     return -torch.norm(heads + rels - tails, dim=-1, p=1)
 
 
+def distmult_score(heads, tails, rels):
+    return torch.sum(heads * rels * tails, dim=-1)
+
+
 def margin_loss(pos_scores, neg_scores):
     loss = 1 - pos_scores + neg_scores
     loss[loss < 0] = 0
     return loss.mean()
+
+
+def nll_loss(pos_scores, neg_scores):
+    return (F.softplus(-pos_scores).mean() + F.softplus(neg_scores).mean()) / 2
