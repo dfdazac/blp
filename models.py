@@ -7,6 +7,7 @@ from transformers import AlbertModel
 class BED(nn.Module):
     def __init__(self, dim, rel_model, loss_fn, num_relations, encoder_name):
         super().__init__()
+        self.dim = dim
         self.encoder = AlbertModel.from_pretrained(encoder_name,
                                                    output_attentions=False,
                                                    output_hidden_states=False)

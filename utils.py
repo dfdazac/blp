@@ -58,7 +58,7 @@ def get_triple_filters(triples, graph, num_ents, ent2idx):
 
 
 def hit_at_k(predictions, ground_truth_idx, hit_positions):
-    """Calculates mean number of hits@k.
+    """Calculates mean number of hits@k. Higher values are ranked first.
 
     Args:
         predictions: BxN tensor of prediction values where B is batch size
@@ -71,7 +71,7 @@ def hit_at_k(predictions, ground_truth_idx, hit_positions):
         Hits@K score.
     """
     max_position = max(hit_positions)
-    _, indices = predictions.topk(k=max_position, largest=False)
+    _, indices = predictions.topk(k=max_position)
     hits = []
 
     for position in hit_positions:
@@ -84,7 +84,7 @@ def hit_at_k(predictions, ground_truth_idx, hit_positions):
 
 def mrr(predictions, ground_truth_idx):
     """Calculates mean reciprocal rank (MRR) for given predictions
-    and ground truth values.
+    and ground truth values. Higher values are ranked first.
 
     Args:
         predictions: BxN tensor of prediction values where B is batch size
@@ -93,6 +93,6 @@ def mrr(predictions, ground_truth_idx):
 
     Returns: float, Mean reciprocal rank score
     """
-    indices = predictions.argsort()
+    indices = predictions.argsort(descending=True)
     rankings = (indices == ground_truth_idx).nonzero()[:, 1].float() + 1.0
     return torch.mean(rankings.reciprocal()).item()

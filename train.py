@@ -35,7 +35,7 @@ def config():
     max_len = 32
     lr = 1e-5
     batch_size = 64
-    max_epochs = 20
+    max_epochs = 40
     num_workers = 4
 
 
@@ -92,8 +92,8 @@ def eval_link_prediction(model, triples_loader, text_dataset, entities,
         rel_embs = model.rel_emb(rels.to(device))
 
         # Score all possible heads and tails
-        heads_predictions = model.energy(ent_emb, tail_embs, rel_embs)
-        tails_predictions = model.energy(head_embs, ent_emb, rel_embs)
+        heads_predictions = model.score_fn(ent_emb, tail_embs, rel_embs)
+        tails_predictions = model.score_fn(head_embs, ent_emb, rel_embs)
 
         pred_ents = torch.cat((heads_predictions, tails_predictions))
         true_ents = torch.cat((heads, tails))
@@ -107,9 +107,9 @@ def eval_link_prediction(model, triples_loader, text_dataset, entities,
             filters = utils.get_triple_filters(triples, filtering_graph,
                                                num_entities, ent2idx)
             heads_filter, tails_filter = filters
-            # Filter entities by assigning them the maximum energy in the batch
+            # Filter entities by assigning them the lowest score in the batch
             filter_mask = torch.cat((heads_filter, tails_filter)).to(device)
-            pred_ents[filter_mask] = pred_ents.max() + 1.0
+            pred_ents[filter_mask] = pred_ents.min() - 1.0
             hits_filt = utils.hit_at_k(pred_ents, true_ents, hit_positions)
             for j, h in enumerate(hits_filt):
                 hits_at_k_filt[hit_positions[j]] += h
