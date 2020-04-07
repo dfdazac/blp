@@ -28,8 +28,8 @@ if all([uri, database]):
 @ex.config
 def config():
     dim = 128
-    rel_model = 'transe'
-    loss_fn = 'margin'
+    rel_model = 'complex'
+    loss_fn = 'nll'
     encoder_name = 'albert-base-v2'
     weight_decay = 0.0
     max_len = 32

@@ -24,13 +24,15 @@ class BED(nn.Module):
             self.normalize_embs = True
         elif rel_model == 'distmult':
             self.score_fn = distmult_score
+        elif rel_model == 'complex':
+            self.score_fn = complex_score
         else:
             raise ValueError(f'Unknown relational model {rel_model}.')
 
         if loss_fn == 'margin':
             self.loss_fn = margin_loss
         elif loss_fn == 'nll':
-            self.loss = nll_loss
+            self.loss_fn = nll_loss
         else:
             raise ValueError(f'Unkown loss function {loss_fn}')
 
@@ -73,6 +75,18 @@ def transe_score(heads, tails, rels):
 
 def distmult_score(heads, tails, rels):
     return torch.sum(heads * rels * tails, dim=-1)
+
+
+def complex_score(heads, tails, rels):
+    heads_re, heads_im = torch.chunk(heads, chunks=2, dim=-1)
+    tails_re, tails_im = torch.chunk(tails, chunks=2, dim=-1)
+    rels_re, rels_im = torch.chunk(rels, chunks=2, dim=-1)
+
+    return torch.sum(rels_re * heads_re * tails_re +
+                     rels_re * heads_im * tails_im +
+                     rels_im * heads_re * tails_im -
+                     rels_im * heads_im * tails_re,
+                     dim=-1)
 
 
 def margin_loss(pos_scores, neg_scores):
