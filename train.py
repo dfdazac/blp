@@ -31,10 +31,10 @@ def config():
     rel_model = 'complex'
     loss_fn = 'nll'
     encoder_name = 'albert-base-v2'
-    weight_decay = 0.0
+    weight_decay = 1e-2
     max_len = 32
     lr = 1e-5
-    batch_size = 64
+    batch_size = 100
     max_epochs = 40
     num_workers = 4
 

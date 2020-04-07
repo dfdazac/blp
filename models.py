@@ -8,15 +8,6 @@ class BED(nn.Module):
     def __init__(self, dim, rel_model, loss_fn, num_relations, encoder_name):
         super().__init__()
         self.dim = dim
-        self.encoder = AlbertModel.from_pretrained(encoder_name,
-                                                   output_attentions=False,
-                                                   output_hidden_states=False)
-        enc_out_dim = self.encoder.config.hidden_size
-        self.enc_linear = nn.Linear(enc_out_dim, dim, bias=False)
-
-        self.rel_emb = nn.Embedding(num_relations, dim)
-        nn.init.kaiming_uniform_(self.rel_emb.weight, nonlinearity='linear')
-
         self.normalize_embs = False
 
         if rel_model == 'transe':
@@ -26,6 +17,10 @@ class BED(nn.Module):
             self.score_fn = distmult_score
         elif rel_model == 'complex':
             self.score_fn = complex_score
+            self.dim *= 2
+        elif rel_model == 'simple':
+            self.score_fn = simple_score
+            self.dim *= 2
         else:
             raise ValueError(f'Unknown relational model {rel_model}.')
 
@@ -35,6 +30,15 @@ class BED(nn.Module):
             self.loss_fn = nll_loss
         else:
             raise ValueError(f'Unkown loss function {loss_fn}')
+
+        self.encoder = AlbertModel.from_pretrained(encoder_name,
+                                                   output_attentions=False,
+                                                   output_hidden_states=False)
+        enc_out_dim = self.encoder.config.hidden_size
+        self.enc_linear = nn.Linear(enc_out_dim, self.dim, bias=False)
+
+        self.rel_emb = nn.Embedding(num_relations, self.dim)
+        nn.init.kaiming_uniform_(self.rel_emb.weight, nonlinearity='linear')
 
     def encode_description(self, tokens, mask):
         # Encode text and extract representation of [CLS] token
@@ -87,6 +91,15 @@ def complex_score(heads, tails, rels):
                      rels_im * heads_re * tails_im -
                      rels_im * heads_im * tails_re,
                      dim=-1)
+
+
+def simple_score(heads, tails, rels):
+    heads_h, heads_t = torch.chunk(heads, chunks=2, dim=-1)
+    tails_h, tails_t = torch.chunk(tails, chunks=2, dim=-1)
+    rel_a, rel_b = torch.chunk(rels, chunks=2, dim=-1)
+
+    return torch.sum(heads_h * rel_a * tails_t +
+                     tails_h * rel_b * heads_t, dim=-1) / 2
 
 
 def margin_loss(pos_scores, neg_scores):
