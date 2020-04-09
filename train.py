@@ -7,7 +7,7 @@ from sacred.run import Run
 from logging import Logger
 from sacred import Experiment
 from sacred.observers import MongoObserver
-from transformers import AlbertTokenizer, get_linear_schedule_with_warmup,\
+from transformers import AlbertTokenizer, get_linear_schedule_with_warmup, \
     AdamW
 
 from data import TextGraphDataset
@@ -28,13 +28,19 @@ if all([uri, database]):
 @ex.config
 def config():
     dim = 128
-    rel_model = 'complex'
-    loss_fn = 'nll'
+    rel_model = 'transe'
+    loss_fn = 'margin'
     encoder_name = 'albert-base-v2'
+    strategy = 'text_summary'
+    join_name_text = strategy == 'joint_text_summary'
+    name_special_tokens = strategy not in {'name_embedding',
+                                           'name_embedding_text_mean',
+                                           'name_embedding_text_summary'}
     weight_decay = 1e-2
     max_len = 32
     lr = 1e-5
-    batch_size = 100
+    batch_size = 64
+    eval_batch_size = 64
     max_epochs = 40
     num_workers = 4
 
@@ -64,10 +70,13 @@ def eval_link_prediction(model, triples_loader, text_dataset, entities,
         # Get a batch of entity IDs
         batch_ents = entities[idx:idx + triples_loader.batch_size]
         # Get their corresponding descriptions
-        tokens, mask, _ = text_dataset.get_entity_description(batch_ents)
+        data = text_dataset.get_entity_name_description(batch_ents)
+        name_tok, name_mask, name_len, text_tok, text_mask, text_len = data
         # Encode with BERT and store result
-        batch_emb = model.encode_description(tokens.to(device),
-                                             mask.to(device))
+        batch_emb = model.encode(name_tok.to(device),
+                                 name_mask.to(device),
+                                 text_tok.to(device),
+                                 text_mask.to(device))
         ent_emb[idx:idx + batch_ents.shape[0]] = batch_emb
         idx += triples_loader.batch_size
 
@@ -143,28 +152,31 @@ def eval_link_prediction(model, triples_loader, text_dataset, entities,
 
 
 @ex.automain
-def link_prediction(dim, rel_model, loss_fn, encoder_name, weight_decay,
-                    max_len, lr, batch_size, max_epochs, num_workers,
-                    _run: Run, _log: Logger):
+def link_prediction(dim, rel_model, loss_fn, encoder_name, strategy,
+                    join_name_text, name_special_tokens,
+                    weight_decay, max_len, lr, batch_size, eval_batch_size,
+                    max_epochs, num_workers, _run: Run, _log: Logger):
     tokenizer = AlbertTokenizer.from_pretrained(encoder_name)
     train_data = TextGraphDataset('data/wikifb15k-237/train-triples.txt',
                                   ents_file='data/wikifb15k-237/entities.txt',
                                   rels_file='data/wikifb15k-237/relations.txt',
                                   text_file='data/wikifb15k-237/descriptions.txt',
                                   max_len=max_len, neg_samples=32,
-                                  tokenizer=tokenizer)
+                                  tokenizer=tokenizer,
+                                  join_name_text=join_name_text,
+                                  name_special_tokens=name_special_tokens)
     train_loader = DataLoader(train_data, batch_size=batch_size, shuffle=True,
                               collate_fn=train_data.collate_text,
                               num_workers=num_workers, drop_last=True)
-    train_eval_loader = DataLoader(train_data, batch_size=128)
+    train_eval_loader = DataLoader(train_data, batch_size=eval_batch_size)
 
     valid_data = TextGraphDataset('data/wikifb15k-237/valid-triples.txt',
                                   max_len=max_len)
-    valid_loader = DataLoader(valid_data, batch_size=128)
+    valid_loader = DataLoader(valid_data, batch_size=eval_batch_size)
 
     test_data = TextGraphDataset('data/wikifb15k-237/test-triples.txt',
                                  max_len=max_len)
-    test_loader = DataLoader(test_data, batch_size=128)
+    test_loader = DataLoader(test_data, batch_size=eval_batch_size)
 
     # Build graph with all triples to compute filtered metrics
     graph = nx.MultiDiGraph()
@@ -181,12 +193,13 @@ def link_prediction(dim, rel_model, loss_fn, encoder_name, weight_decay,
     train_val_ent = torch.tensor(list(train_val_ent))
     train_val_test_ent = torch.tensor(list(train_val_test_ent))
 
-    model = BED(dim, rel_model, loss_fn, train_data.num_rels, encoder_name)
+    model = BED(dim, rel_model, loss_fn, train_data.num_rels, encoder_name,
+                strategy)
     model = model.to(device)
 
     optimizer = AdamW([{'params': model.encoder.parameters(), 'lr': lr},
-                      {'params': model.rel_emb.parameters()},
-                      {'params': model.enc_linear.parameters()}],
+                       {'params': model.rel_emb.parameters()},
+                       {'params': model.enc_linear.parameters()}],
                       lr=1e-4, weight_decay=weight_decay)
 
     total_steps = len(train_loader) * max_epochs
@@ -213,7 +226,7 @@ def link_prediction(dim, rel_model, loss_fn, encoder_name, weight_decay,
                           f'[{step}/{len(train_loader)}]: {loss.item():.6f}')
                 _run.log_scalar('batch_loss', loss.item())
 
-        _run.log_scalar('train_loss', train_loss/len(train_loader), epoch)
+        _run.log_scalar('train_loss', train_loss / len(train_loader), epoch)
 
         _log.info('Evaluating on sample of training set...')
         eval_link_prediction(model, train_eval_loader, train_data, train_ent,
