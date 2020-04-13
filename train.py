@@ -8,7 +8,7 @@ from logging import Logger
 from sacred import Experiment
 from sacred.observers import MongoObserver
 from transformers import AlbertTokenizer, get_linear_schedule_with_warmup, \
-    AdamW
+    AdamW, BertTokenizer
 
 from data import TextGraphDataset
 from models import BED
@@ -27,20 +27,16 @@ if all([uri, database]):
 
 @ex.config
 def config():
-    dim = 128
-    rel_model = 'transe'
-    loss_fn = 'margin'
-    encoder_name = 'albert-base-v2'
-    strategy = 'text_summary'
-    join_name_text = strategy == 'joint_text_summary'
-    name_special_tokens = strategy not in {'name_embedding',
-                                           'name_embedding_text_mean',
-                                           'name_embedding_text_summary'}
+    dim = 64
+    rel_model = 'complex'
+    loss_fn = 'nll'
+    encoder_name = 'bert-base-cased'
     weight_decay = 1e-2
     max_len = 32
+    num_negatives = 64
     lr = 1e-5
     batch_size = 64
-    eval_batch_size = 64
+    eval_batch_size = 128
     max_epochs = 40
     num_workers = 4
 
@@ -63,20 +59,19 @@ def eval_link_prediction(model, triples_loader, text_dataset, entities,
     ent2idx = utils.make_ent2idx(entities)
 
     # Create embedding lookup table with text encoder
-    ent_emb = torch.zeros((num_entities, model.dim), dtype=torch.float,
+    ent_emb = torch.zeros((num_entities, model.num_params), dtype=torch.float,
                           device=device)
     idx = 0
     while idx < num_entities:
         # Get a batch of entity IDs
         batch_ents = entities[idx:idx + triples_loader.batch_size]
         # Get their corresponding descriptions
-        data = text_dataset.get_entity_name_description(batch_ents)
-        name_tok, name_mask, name_len, text_tok, text_mask, text_len = data
+        data = text_dataset.get_entity_description(batch_ents)
+        text_tok, text_mask, end_idx = data
         # Encode with BERT and store result
-        batch_emb = model.encode(name_tok.to(device),
-                                 name_mask.to(device),
-                                 text_tok.to(device),
-                                 text_mask.to(device))
+        batch_emb = model.encode(text_tok.to(device),
+                                 text_mask.to(device),
+                                 end_idx.to(device))
         ent_emb[idx:idx + batch_ents.shape[0]] = batch_emb
         idx += triples_loader.batch_size
 
@@ -152,19 +147,17 @@ def eval_link_prediction(model, triples_loader, text_dataset, entities,
 
 
 @ex.automain
-def link_prediction(dim, rel_model, loss_fn, encoder_name, strategy,
-                    join_name_text, name_special_tokens,
-                    weight_decay, max_len, lr, batch_size, eval_batch_size,
+def link_prediction(dim, rel_model, loss_fn, encoder_name,
+                    weight_decay, max_len, num_negatives, lr, batch_size,
+                    eval_batch_size,
                     max_epochs, num_workers, _run: Run, _log: Logger):
-    tokenizer = AlbertTokenizer.from_pretrained(encoder_name)
+    tokenizer = BertTokenizer.from_pretrained(encoder_name)
     train_data = TextGraphDataset('data/wikifb15k-237/train-triples.txt',
                                   ents_file='data/wikifb15k-237/entities.txt',
                                   rels_file='data/wikifb15k-237/relations.txt',
                                   text_file='data/wikifb15k-237/descriptions.txt',
-                                  max_len=max_len, neg_samples=32,
-                                  tokenizer=tokenizer,
-                                  join_name_text=join_name_text,
-                                  name_special_tokens=name_special_tokens)
+                                  max_len=max_len, neg_samples=num_negatives,
+                                  tokenizer=tokenizer)
     train_loader = DataLoader(train_data, batch_size=batch_size, shuffle=True,
                               collate_fn=train_data.collate_text,
                               num_workers=num_workers, drop_last=True)
@@ -193,15 +186,10 @@ def link_prediction(dim, rel_model, loss_fn, encoder_name, strategy,
     train_val_ent = torch.tensor(list(train_val_ent))
     train_val_test_ent = torch.tensor(list(train_val_test_ent))
 
-    model = BED(dim, rel_model, loss_fn, train_data.num_rels, encoder_name,
-                strategy)
+    model = BED(dim, rel_model, loss_fn, train_data.num_rels, encoder_name)
     model = model.to(device)
 
-    optimizer = AdamW([{'params': model.encoder.parameters(), 'lr': lr},
-                       {'params': model.rel_emb.parameters()},
-                       {'params': model.enc_linear.parameters()}],
-                      lr=1e-4, weight_decay=weight_decay)
-
+    optimizer = AdamW(model.parameters(), lr=lr, weight_decay=weight_decay)
     total_steps = len(train_loader) * max_epochs
     warmup = int(0.2 * total_steps)
     scheduler = get_linear_schedule_with_warmup(optimizer,

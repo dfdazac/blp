@@ -1,22 +1,49 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from transformers import AlbertModel
+from transformers import AlbertModel, BertModel
+
+
+class DualProjection(nn.Module):
+    def __init__(self, in_features, out_features):
+        super().__init__()
+        in_features //= 2
+        out_features //= 2
+        self.linear_1 = nn.Linear(in_features, out_features, bias=False)
+        self.linear_2 = nn.Linear(in_features, out_features, bias=False)
+
+    def forward(self, x):
+        x_1, x_2 = torch.chunk(x, chunks=2, dim=-1)
+        h_1 = self.linear_1(x_1)
+        h_2 = self.linear_2(x_2)
+        return torch.cat((h_1, h_2), dim=-1)
+
+
+class DualEmbedding(nn.Module):
+    def __init__(self, num_embeddings, embeddings_dim):
+        super().__init__()
+        embeddings_dim //= 2
+        self.embedding_1 = nn.Embedding(num_embeddings, embeddings_dim)
+        self.embedding_2 = nn.Embedding(num_embeddings, embeddings_dim)
+        nn.init.xavier_uniform_(self.embedding_1.weight)
+        nn.init.xavier_uniform_(self.embedding_2.weight)
+
+    def forward(self, x):
+        h_1 = self.embedding_1(x)
+        h_2 = self.embedding_2(x)
+        return torch.cat((h_1, h_2), dim=-1)
 
 
 class BED(nn.Module):
-    def __init__(self, dim, rel_model, loss_fn, num_relations, encoder_name,
-                 strategy):
+    def __init__(self, dim, rel_model, loss_fn, num_relations, encoder_name):
         super().__init__()
-        self.encoder = AlbertModel.from_pretrained(encoder_name,
-                                                   output_attentions=False,
-                                                   output_hidden_states=False)
-        enc_emb_size = self.encoder.config.embedding_size
-        enc_out_dim = self.encoder.config.hidden_size
+        self.encoder = BertModel.from_pretrained(encoder_name,
+                                                 output_attentions=False,
+                                                 output_hidden_states=False)
+        hidden_size = self.encoder.config.hidden_size
 
-        self.dim = dim
+        self.num_params = dim
         self.normalize_embs = False
-        freeze_encoder = False
 
         if rel_model == 'transe':
             self.score_fn = transe_score
@@ -25,12 +52,20 @@ class BED(nn.Module):
             self.score_fn = distmult_score
         elif rel_model == 'complex':
             self.score_fn = complex_score
-            self.dim *= 2
+            self.num_params *= 2
         elif rel_model == 'simple':
             self.score_fn = simple_score
-            self.dim *= 2
+            self.num_params *= 2
         else:
             raise ValueError(f'Unknown relational model {rel_model}.')
+
+        if rel_model in {'transe', 'distmult', 'complex'}:  # FIXME
+            self.enc_linear = nn.Linear(hidden_size, self.num_params, bias=False)
+            self.rel_emb = nn.Embedding(num_relations, self.num_params)
+            nn.init.xavier_uniform_(self.rel_emb.weight)
+        else:
+            self.enc_linear = DualProjection(2 * hidden_size, self.num_params)
+            self.rel_emb = DualEmbedding(num_relations, self.num_params)
 
         if loss_fn == 'margin':
             self.loss_fn = margin_loss
@@ -39,103 +74,31 @@ class BED(nn.Module):
         else:
             raise ValueError(f'Unkown loss function {loss_fn}')
 
-        enc_linear = nn.Linear(enc_out_dim, self.dim, bias=False)
-        if strategy in {'text_summary', 'joint_text_summary'}:
-            self.encode_fn = self.text_summary
-        elif strategy == 'name_summary':
-            self.encode_fn = self.name_summary
-        elif strategy in {'text_mean', 'name_mean'}:
-            self.encode_fn = getattr(self, strategy)
-            freeze_encoder = True
-            self.dim = enc_out_dim
-        elif strategy == 'name_embedding':
-            self.encode_fn = self.name_embedding
-            freeze_encoder = True
-            self.dim = enc_emb_size
-        elif strategy == 'name_embedding_text_mean':
-            self.encode_fn = self.name_embedding_text_mean
-            freeze_encoder = True
-            self.dim = enc_emb_size + enc_out_dim
-        elif strategy == 'name_embedding_text_summary':
-            self.encode_fn = self.name_embedding_text_summary
-            enc_linear = nn.Linear(enc_emb_size + enc_out_dim, self.dim,
-                                   bias=False)
+    def encode(self, text_tok, text_mask, end_idx):
+        if isinstance(self.enc_linear, DualProjection):
+            # Extract representation of [CLS] and [SEP] tokens
+            embs = self.encoder(text_tok, text_mask)[0]
+            cls_embs = embs[:, 0]
+            batch_idx = torch.arange(0, embs.shape[0], device=embs.device)
+            sep_embs = embs[batch_idx, end_idx.squeeze()]
+            embs = torch.cat((cls_embs, sep_embs), dim=-1)
         else:
-            raise ValueError(f'Unknown strategy {strategy}')
+            # Extract representation of [CLS] token
+            embs = self.encoder(text_tok, text_mask)[0][:, 0]
 
-        self.enc_linear = enc_linear
-        self.rel_emb = nn.Embedding(num_relations, self.dim)
-        nn.init.kaiming_uniform_(self.rel_emb.weight, nonlinearity='linear')
-
-        if freeze_encoder:
-            for param in self.encoder.parameters():
-                param.requires_grad = False
-
-    def text_summary(self, name_tok, name_mask, text_tok, text_mask):
-        # Encode text and extract representation of [CLS] token
-        embs = self.encoder(text_tok, text_mask)[0][:, 0]
         embs = self.enc_linear(embs)
-        return embs
-
-    def name_summary(self, name_tok, name_mask, text_tok, text_mask):
-        # Encode name and extract representation of [CLS] token
-        embs = self.encoder(name_tok, name_mask)[0][:, 0]
-        embs = self.enc_linear(embs)
-        return embs
-
-    def text_mean(self, name_tok, name_mask, text_tok, text_mask):
-        # Encode text and average hidden states for all words
-        embs = self.encoder(text_tok, text_mask)[0]
-        embs = torch.sum(text_mask.unsqueeze(-1) * embs, dim=1)
-        lengths = torch.sum(text_mask, dim=1, keepdim=True)
-        embs = embs / lengths
-        return embs
-
-    def name_mean(self, name_tok, name_mask, text_tok, text_mask):
-        # Encode name and average hidden states for all words
-        embs = self.encoder(name_tok, name_mask)[0]
-        embs = torch.sum(name_mask.unsqueeze(-1) * embs, dim=1)
-        lengths = torch.sum(name_mask, dim=1, keepdim=True)
-        embs = embs / lengths
-        return embs
-
-    def name_embedding(self, name_tok, name_mask, text_tok, text_mask):
-        # Extract and average low-level embeddings of name
-        embs = self.encoder.embeddings.word_embeddings(name_tok)
-        embs = torch.sum(name_mask.unsqueeze(dim=-1) * embs, dim=1)
-        lengths = torch.sum(name_mask, dim=1, keepdim=True)
-        embs = embs / lengths
-        return embs
-
-    def name_embedding_text_mean(self, name_tok, name_mask, text_tok, text_mask):
-        name_embs = self.name_embedding(name_tok, name_mask, None, None)
-        text_embs = self.text_mean(None, None, text_tok, text_mask)
-        embs = torch.cat((name_embs, text_embs), dim=-1)
-        return embs
-
-    def name_embedding_text_summary(self, name_tok, name_mask, text_tok, text_mask):
-        name_embs = self.name_embedding(name_tok, name_mask, None, None)
-        text_embs = self.encoder(text_tok, text_mask)[0][:, 0]
-        embs = torch.cat((name_embs, text_embs), dim=-1)
-        embs = self.enc_linear(embs)
-        return embs
-
-    def encode(self, name_tok, name_mask, text_tok, text_mask):
-        embs = self.encode_fn(name_tok, name_mask, text_tok, text_mask)
         if self.normalize_embs:
             embs = F.normalize(embs, dim=-1)
 
         return embs
 
-    def forward(self, name_tok, name_mask, text_tok, text_mask, rels, neg_idx):
+    def forward(self, text_tok, text_mask, end_idx, rels, neg_idx):
         batch_size, _, num_text_tokens = text_tok.shape
-        num_name_tokens = name_tok.shape[-1]
 
         # Obtain embeddings for [CLS] token
-        embs = self.encode(name_tok.view(-1, num_name_tokens),
-                           name_mask.view(-1, num_name_tokens),
-                           text_tok.view(-1, num_text_tokens),
-                           text_mask.view(-1, num_text_tokens))
+        embs = self.encode(text_tok.view(-1, num_text_tokens),
+                           text_mask.view(-1, num_text_tokens),
+                           end_idx.view(-1, 1))
         embs = embs.view(batch_size, 2, -1)
 
         # Scores for positive samples

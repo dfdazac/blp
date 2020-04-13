@@ -129,8 +129,7 @@ class TextGraphDataset(GraphDataset):
     """
     def __init__(self, triples_file, ents_file=None, rels_file=None,
                  text_file=None, max_len=None, neg_samples=1,
-                 tokenizer: transformers.PreTrainedTokenizer=None,
-                 join_name_text=False, name_special_tokens=True):
+                 tokenizer: transformers.PreTrainedTokenizer=None):
         super().__init__(triples_file, ents_file, rels_file)
 
         if text_file is not None or tokenizer is not None:
@@ -157,16 +156,12 @@ class TextGraphDataset(GraphDataset):
                 entity = line[:name_start].strip()
                 ent_id = ent_ids[entity]
 
-                if join_name_text:
-                    text = f'{name} [SEP] {text}'
-
                 text_tokens = tokenizer.encode(text,
                                                max_length=max_len,
                                                return_tensors='pt')
                 name_tokens = tokenizer.encode(name,
                                                max_length=max_len,
-                                               return_tensors='pt',
-                                               add_special_tokens=name_special_tokens)
+                                               return_tensors='pt')
 
                 text_len = text_tokens.shape[1]
                 name_len = name_tokens.shape[1]
@@ -220,8 +215,8 @@ class TextGraphDataset(GraphDataset):
     def get_entity_description(self, ent_ids):
         text_tok, text_mask, text_len = self.get_batch_data(self.text_data,
                                                             ent_ids)
-
-        return text_tok, text_mask, text_len
+        end_idx = text_len - 1
+        return text_tok, text_mask, end_idx
 
     def collate_text(self, data_list):
         """Given a batch of triples, return it in the form of
@@ -234,8 +229,7 @@ class TextGraphDataset(GraphDataset):
                              ' larger than 1.')
 
         pos_pairs, rels = torch.stack(data_list).split(2, dim=1)
-        data = self.get_entity_name_description(pos_pairs)
-        name_tok, name_mask, name_len, text_tok, text_mask, text_len = data
+        text_tok, text_mask, end_idx = self.get_entity_description(pos_pairs)
 
         # Obtain indices for negative sampling within the batch
         num_ents = batch_size * 2
@@ -251,7 +245,7 @@ class TextGraphDataset(GraphDataset):
 
         neg_idx = torch.stack((head_idx, tail_idx), dim=1)
 
-        return name_tok, name_mask, text_tok, text_mask, rels, neg_idx
+        return text_tok, text_mask, end_idx, rels, neg_idx
 
     def negative_sampling(self, data_list):
         pos_pairs, neg_pairs, rels = super().negative_sampling(data_list)
