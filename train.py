@@ -19,22 +19,22 @@ device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 ex = Experiment()
 # Set up database logs
-uri = os.environ.get('MLAB_URI')
-database = os.environ.get('MLAB_DB')
+uri = os.environ.get('DB_URI')
+database = os.environ.get('DB_NAME')
 if all([uri, database]):
     ex.observers.append(MongoObserver(uri, database))
 
 
 @ex.config
 def config():
-    dim = 64
-    rel_model = 'complex'
-    loss_fn = 'nll'
+    dim = 128
+    rel_model = 'transe'
+    loss_fn = 'margin'
     encoder_name = 'bert-base-cased'
     regularizer = 1e-2
     max_len = 32
     num_negatives = 64
-    lr = 1e-5
+    lr = 2e-5
     batch_size = 64
     eval_batch_size = 128
     max_epochs = 40
