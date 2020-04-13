@@ -2,13 +2,13 @@ import os
 import os.path as osp
 import networkx as nx
 import torch
+from torch.optim import Adam
 from torch.utils.data import DataLoader
 from sacred.run import Run
 from logging import Logger
 from sacred import Experiment
 from sacred.observers import MongoObserver
-from transformers import AlbertTokenizer, get_linear_schedule_with_warmup, \
-    AdamW, BertTokenizer
+from transformers import BertTokenizer, get_linear_schedule_with_warmup
 
 from data import TextGraphDataset
 from models import BED
@@ -31,7 +31,7 @@ def config():
     rel_model = 'complex'
     loss_fn = 'nll'
     encoder_name = 'bert-base-cased'
-    weight_decay = 1e-2
+    regularizer = 1e-2
     max_len = 32
     num_negatives = 64
     lr = 1e-5
@@ -67,11 +67,9 @@ def eval_link_prediction(model, triples_loader, text_dataset, entities,
         batch_ents = entities[idx:idx + triples_loader.batch_size]
         # Get their corresponding descriptions
         data = text_dataset.get_entity_description(batch_ents)
-        text_tok, text_mask, end_idx = data
+        text_tok, text_mask, text_len = data
         # Encode with BERT and store result
-        batch_emb = model.encode(text_tok.to(device),
-                                 text_mask.to(device),
-                                 end_idx.to(device))
+        batch_emb = model.encode(text_tok.to(device), text_mask.to(device))
         ent_emb[idx:idx + batch_ents.shape[0]] = batch_emb
         idx += triples_loader.batch_size
 
@@ -148,7 +146,7 @@ def eval_link_prediction(model, triples_loader, text_dataset, entities,
 
 @ex.automain
 def link_prediction(dim, rel_model, loss_fn, encoder_name,
-                    weight_decay, max_len, num_negatives, lr, batch_size,
+                    regularizer, max_len, num_negatives, lr, batch_size,
                     eval_batch_size,
                     max_epochs, num_workers, _run: Run, _log: Logger):
     tokenizer = BertTokenizer.from_pretrained(encoder_name)
@@ -186,10 +184,11 @@ def link_prediction(dim, rel_model, loss_fn, encoder_name,
     train_val_ent = torch.tensor(list(train_val_ent))
     train_val_test_ent = torch.tensor(list(train_val_test_ent))
 
-    model = BED(dim, rel_model, loss_fn, train_data.num_rels, encoder_name)
+    model = BED(dim, rel_model, loss_fn, train_data.num_rels, encoder_name,
+                regularizer)
     model = model.to(device)
 
-    optimizer = AdamW(model.parameters(), lr=lr, weight_decay=weight_decay)
+    optimizer = Adam(model.parameters(), lr=lr)
     total_steps = len(train_loader) * max_epochs
     warmup = int(0.2 * total_steps)
     scheduler = get_linear_schedule_with_warmup(optimizer,
