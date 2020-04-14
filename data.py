@@ -3,9 +3,23 @@ import os.path as osp
 import torch
 from torch.utils.data import Dataset
 import transformers
+import string
+import nltk
+from nltk.corpus import stopwords
 
 UNK = '[UNK]'
 DELIM = '####'
+
+while True:
+    try:
+        STOP_WORDS = stopwords.words('english')
+        break
+    except LookupError:
+        nltk.download('stopwords')
+        nltk.download('punkt')
+        continue
+
+DROPPED = STOP_WORDS + list(string.punctuation)
 
 
 def file_to_ids(file_path):
@@ -121,15 +135,12 @@ class TextGraphDataset(GraphDataset):
             Assumes one description per line for each entity, starting with
             the entity ID, followed by its description.
         tokenizer: transformers.PreTrainedTokenizer
-        text_data: torch.Tensor of type torch.long, of shape Nx(L + 1), where
-            N is the number of entities, and L is the maximum sequence length
-            (obtained from tokenizer.max_len). The first element of each row
-            contains the length of each sequence, followed by the token IDs of
-            the respective entity description.
+        drop_stopwords: bool
     """
     def __init__(self, triples_file, ents_file=None, rels_file=None,
                  text_file=None, max_len=None, neg_samples=1,
-                 tokenizer: transformers.PreTrainedTokenizer=None):
+                 tokenizer: transformers.PreTrainedTokenizer=None,
+                 drop_stopwords=False):
         super().__init__(triples_file, ents_file, rels_file)
 
         if text_file is not None or tokenizer is not None:
@@ -155,6 +166,10 @@ class TextGraphDataset(GraphDataset):
 
                 entity = line[:name_start].strip()
                 ent_id = ent_ids[entity]
+
+                if drop_stopwords:
+                    tokens = nltk.word_tokenize(text)
+                    text = ' '.join([t for t in tokens if t.lower() not in DROPPED])
 
                 text_tokens = tokenizer.encode(text,
                                                max_length=max_len,

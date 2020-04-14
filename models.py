@@ -4,16 +4,11 @@ import torch.nn.functional as F
 from transformers import BertModel
 
 
-class BED(nn.Module):
-    def __init__(self, dim, rel_model, loss_fn, num_relations, encoder_name,
-                 regularizer):
+class DLP(nn.Module):
+    """Description-based Link Prediction (DLP)."""
+    def __init__(self, dim, rel_model, loss_fn, num_relations, regularizer):
         super().__init__()
-        self.encoder = BertModel.from_pretrained(encoder_name,
-                                                 output_attentions=False,
-                                                 output_hidden_states=False)
-        hidden_size = self.encoder.config.hidden_size
-
-        self.num_params = dim
+        self.dim = dim
         self.normalize_embs = False
         self.regularizer = regularizer
 
@@ -24,15 +19,12 @@ class BED(nn.Module):
             self.score_fn = distmult_score
         elif rel_model == 'complex':
             self.score_fn = complex_score
-            self.num_params *= 2
         elif rel_model == 'simple':
             self.score_fn = simple_score
-            self.num_params *= 2
         else:
             raise ValueError(f'Unknown relational model {rel_model}.')
 
-        self.enc_linear = nn.Linear(hidden_size, self.num_params, bias=False)
-        self.rel_emb = nn.Embedding(num_relations, self.num_params)
+        self.rel_emb = nn.Embedding(num_relations, self.dim)
         nn.init.xavier_uniform_(self.rel_emb.weight)
 
         if loss_fn == 'margin':
@@ -43,14 +35,7 @@ class BED(nn.Module):
             raise ValueError(f'Unkown loss function {loss_fn}')
 
     def encode(self, text_tok, text_mask):
-        # Extract representation of [CLS] token
-        embs = self.encoder(text_tok, text_mask)[0][:, 0]
-
-        embs = self.enc_linear(embs)
-        if self.normalize_embs:
-            embs = F.normalize(embs, dim=-1)
-
-        return embs
+        raise NotImplementedError
 
     def forward(self, text_tok, text_mask, rels, neg_idx):
         batch_size, _, num_text_tokens = text_tok.shape
@@ -75,6 +60,59 @@ class BED(nn.Module):
         loss = self.loss_fn(pos_scores, neg_scores)
 
         return loss + reg_loss
+
+
+class BED(DLP):
+    """BERT for Entity Descriptions (BED)."""
+    def __init__(self, dim, rel_model, loss_fn, num_relations, encoder_name,
+                 regularizer):
+        super().__init__(dim, rel_model, loss_fn, num_relations, regularizer)
+        self.encoder = BertModel.from_pretrained(encoder_name,
+                                                 output_attentions=False,
+                                                 output_hidden_states=False)
+        hidden_size = self.encoder.config.hidden_size
+        self.enc_linear = nn.Linear(hidden_size, self.dim, bias=False)
+
+    def encode(self, text_tok, text_mask):
+        # Extract BERT representation of [CLS] token
+        embs = self.encoder(text_tok, text_mask)[0][:, 0]
+
+        embs = self.enc_linear(embs)
+        if self.normalize_embs:
+            embs = F.normalize(embs, dim=-1)
+
+        return embs
+
+
+class BertBOW(DLP):
+    """Bag-of-words (BOW) description encoder, with BERT low-level embeddings.
+    """
+    def __init__(self, rel_model, loss_fn, num_relations, encoder_name,
+                 regularizer):
+        encoder = BertModel.from_pretrained(encoder_name)
+        embeddings = encoder.embeddings.word_embeddings
+        dim = embeddings.embedding_dim
+        super().__init__(dim, rel_model, loss_fn, num_relations, regularizer)
+
+        self.embeddings = embeddings
+
+    def encode(self, text_tok, text_mask):
+        # Extract average of word embeddings
+        embs = self.embeddings(text_tok)
+        lengths = torch.sum(text_mask, dim=-1, keepdim=True)
+        embs = torch.sum(text_mask.unsqueeze(dim=-1) * embs, dim=1)
+        embs = embs / lengths
+
+        return embs
+
+
+class DKRL(DLP):
+    """Description-Embodied Knowledge Represen- tation Learning (DKRL) with CNN
+    encoder, after
+    Zuo, Yukun, et al. "Representation learning of knowledge graphs with
+    entity attributes and multimedia descriptions."
+    """
+    pass
 
 
 def transe_score(heads, tails, rels):

@@ -11,7 +11,7 @@ from sacred.observers import MongoObserver
 from transformers import BertTokenizer, get_linear_schedule_with_warmup
 
 from data import TextGraphDataset
-from models import BED
+import models
 import utils
 
 OUT_PATH = 'output/'
@@ -28,6 +28,7 @@ if all([uri, database]):
 @ex.config
 def config():
     dim = 128
+    model = 'bert-bow'
     rel_model = 'transe'
     loss_fn = 'margin'
     encoder_name = 'bert-base-cased'
@@ -59,7 +60,7 @@ def eval_link_prediction(model, triples_loader, text_dataset, entities,
     ent2idx = utils.make_ent2idx(entities)
 
     # Create embedding lookup table with text encoder
-    ent_emb = torch.zeros((num_entities, model.num_params), dtype=torch.float,
+    ent_emb = torch.zeros((num_entities, model.dim), dtype=torch.float,
                           device=device)
     idx = 0
     while idx < num_entities:
@@ -144,18 +145,35 @@ def eval_link_prediction(model, triples_loader, text_dataset, entities,
     return ent_emb, mrr
 
 
+def get_model(model, dim, rel_model, loss_fn, num_relations, encoder_name,
+              regularizer):
+    if model == 'bed':
+        return models.BED(dim, rel_model, loss_fn, num_relations, encoder_name,
+                          regularizer)
+    elif model == 'bert-bow':
+        return models.BertBOW(rel_model, loss_fn, num_relations,
+                              encoder_name, regularizer)
+    elif model == 'bert-dkrl':
+        return models.DKRL(dim, rel_model, loss_fn, num_relations,
+                           encoder_name, regularizer)
+
+
 @ex.automain
-def link_prediction(dim, rel_model, loss_fn, encoder_name,
+def link_prediction(dim, model, rel_model, loss_fn, encoder_name,
                     regularizer, max_len, num_negatives, lr, batch_size,
                     eval_batch_size,
                     max_epochs, num_workers, _run: Run, _log: Logger):
     tokenizer = BertTokenizer.from_pretrained(encoder_name)
+
+    drop_stopwords = model in {'bert-bow', 'bert-dkrl'}
+
     train_data = TextGraphDataset('data/wikifb15k-237/train-triples.txt',
                                   ents_file='data/wikifb15k-237/entities.txt',
                                   rels_file='data/wikifb15k-237/relations.txt',
                                   text_file='data/wikifb15k-237/descriptions.txt',
                                   max_len=max_len, neg_samples=num_negatives,
-                                  tokenizer=tokenizer)
+                                  tokenizer=tokenizer,
+                                  drop_stopwords=drop_stopwords)
     train_loader = DataLoader(train_data, batch_size=batch_size, shuffle=True,
                               collate_fn=train_data.collate_text,
                               num_workers=num_workers, drop_last=True)
@@ -184,9 +202,8 @@ def link_prediction(dim, rel_model, loss_fn, encoder_name,
     train_val_ent = torch.tensor(list(train_val_ent))
     train_val_test_ent = torch.tensor(list(train_val_test_ent))
 
-    model = BED(dim, rel_model, loss_fn, train_data.num_rels, encoder_name,
-                regularizer)
-    model = model.to(device)
+    model = get_model(model, dim, rel_model, loss_fn, train_data.num_rels,
+                      encoder_name, regularizer).to(device)
 
     optimizer = Adam(model.parameters(), lr=lr)
     total_steps = len(train_loader) * max_epochs
