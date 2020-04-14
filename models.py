@@ -112,7 +112,29 @@ class DKRL(DLP):
     Zuo, Yukun, et al. "Representation learning of knowledge graphs with
     entity attributes and multimedia descriptions."
     """
-    pass
+
+    def __init__(self, dim, rel_model, loss_fn, num_relations, encoder_name,
+                 regularizer):
+        encoder = BertModel.from_pretrained(encoder_name)
+        embeddings = encoder.embeddings.word_embeddings
+        super().__init__(dim, rel_model, loss_fn, num_relations, regularizer)
+
+        self.embeddings = embeddings
+        emb_dim = self.embeddings.embedding_dim
+        self.cnn = nn.Sequential(nn.Conv1d(emb_dim, self.dim, kernel_size=2),
+                                 nn.MaxPool1d(kernel_size=4),
+                                 nn.Tanh(),
+                                 nn.Conv1d(self.dim, self.dim, kernel_size=2),
+                                 nn.AdaptiveAvgPool1d(1),
+                                 nn.Tanh())
+
+    def encode(self, text_tok, text_mask):
+        # Extract word embeddings and mask padding
+        embs = self.embeddings(text_tok) * text_mask.unsqueeze(dim=-1)
+        embs = embs.transpose(1, 2)
+        embs = self.cnn(embs).squeeze()
+
+        return embs
 
 
 def transe_score(heads, tails, rels):

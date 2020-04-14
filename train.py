@@ -28,7 +28,7 @@ if all([uri, database]):
 @ex.config
 def config():
     dim = 128
-    model = 'bert-bow'
+    model = 'bert-dkrl'
     rel_model = 'transe'
     loss_fn = 'margin'
     encoder_name = 'bert-base-cased'
@@ -36,6 +36,7 @@ def config():
     max_len = 32
     num_negatives = 64
     lr = 2e-5
+    use_scheduler = True
     batch_size = 64
     eval_batch_size = 128
     max_epochs = 40
@@ -160,7 +161,8 @@ def get_model(model, dim, rel_model, loss_fn, num_relations, encoder_name,
 
 @ex.automain
 def link_prediction(dim, model, rel_model, loss_fn, encoder_name,
-                    regularizer, max_len, num_negatives, lr, batch_size,
+                    regularizer, max_len, num_negatives, lr, use_scheduler,
+                    batch_size,
                     eval_batch_size,
                     max_epochs, num_workers, _run: Run, _log: Logger):
     tokenizer = BertTokenizer.from_pretrained(encoder_name)
@@ -207,10 +209,11 @@ def link_prediction(dim, model, rel_model, loss_fn, encoder_name,
 
     optimizer = Adam(model.parameters(), lr=lr)
     total_steps = len(train_loader) * max_epochs
-    warmup = int(0.2 * total_steps)
-    scheduler = get_linear_schedule_with_warmup(optimizer,
-                                                num_warmup_steps=warmup,
-                                                num_training_steps=total_steps)
+    if use_scheduler:
+        warmup = int(0.2 * total_steps)
+        scheduler = get_linear_schedule_with_warmup(optimizer,
+                                                    num_warmup_steps=warmup,
+                                                    num_training_steps=total_steps)
     best_valid_mrr = 0.0
     checkpoint_file = osp.join(OUT_PATH, f'bed-{_run._id}.pt')
     for epoch in range(1, max_epochs + 1):
@@ -221,7 +224,8 @@ def link_prediction(dim, model, rel_model, loss_fn, encoder_name,
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
-            scheduler.step()
+            if use_scheduler:
+                scheduler.step()
 
             train_loss += loss.item()
 
