@@ -9,6 +9,7 @@ import networkx as nx
 import random
 import os.path as osp
 from collections import Counter
+import torch
 
 # Maximum number of entities allowed by Wiki APIs
 MAX_ENTITIES = 50
@@ -382,12 +383,47 @@ def drop_entities(triples_file, train_size=0.8, valid_size=0.1, test_size=0.1):
     print(f'Saved output files to {dirname}/')
 
 
+def load_embeddings(embs_file):
+    """Read a file containing a word followed by its embedding, as float values
+    separated by whitespace.
+
+    Args:
+        embs_file: str, path to file
+
+    Returns:
+        tensor of shape (vocabulary, embedding_dimension), type torch.float
+        dict, mapping words (str) to id (int).
+    """
+    filename, _ = osp.splitext(embs_file)
+
+    word2idx = {}
+    word_embeddings = []
+    progress = tqdm()
+    with open(embs_file) as file:
+        for i, line in enumerate(file):
+            word, *embedding = line.split(' ')
+            word2idx[word] = i
+            word_embeddings.append([float(e) for e in embedding])
+            progress.update(1)
+
+    progress.close()
+
+    word_embeddings = torch.tensor(word_embeddings)
+    # Add embedding for out-of-vocabulary words
+    unk_emb = torch.mean(word_embeddings, dim=0, keepdim=True)
+    word_embeddings = torch.cat((word_embeddings, unk_emb))
+    word2idx['[UNK]'] = len(word2idx)
+
+    torch.save(word_embeddings, f'{filename}.pt')
+    torch.save(word2idx, f'{filename}-maps.pt')
+
+
 if __name__ == '__main__':
     parser = ArgumentParser(description='Extract Wikipedia pages for a file'
                                         'with a list of Wikidata entities.')
     parser.add_argument('command', choices=['fetch', 'clean', 'discard',
                                             'describe', 'discard_desc',
-                                            'drop_entities'])
+                                            'drop_entities', 'load_embs'])
     parser.add_argument('--in_file', help='File with a list of entities')
     parser.add_argument('--triples_file', help='File with a list of triples')
     parser.add_argument('--desc_file', help='File with Wikipedia descriptions')
@@ -405,3 +441,5 @@ if __name__ == '__main__':
         discard_descriptions(args.desc_file, args.in_file)
     elif args.command == 'drop_entities':
         drop_entities(args.in_file)
+    elif args.command == 'load_embs':
+        load_embeddings(args.in_file)
