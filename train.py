@@ -10,7 +10,7 @@ from sacred import Experiment
 from sacred.observers import MongoObserver
 from transformers import BertTokenizer, get_linear_schedule_with_warmup
 
-from data import TextGraphDataset
+from data import TextGraphDataset, GloVeTokenizer
 import models
 import utils
 
@@ -28,7 +28,7 @@ if all([uri, database]):
 @ex.config
 def config():
     dim = 128
-    model = 'bert-dkrl'
+    model = 'glove-dkrl'
     rel_model = 'transe'
     loss_fn = 'margin'
     encoder_name = 'bert-base-cased'
@@ -152,11 +152,19 @@ def get_model(model, dim, rel_model, loss_fn, num_relations, encoder_name,
         return models.BED(dim, rel_model, loss_fn, num_relations, encoder_name,
                           regularizer)
     elif model == 'bert-bow':
-        return models.BertBOW(rel_model, loss_fn, num_relations,
-                              encoder_name, regularizer)
+        return models.BOW(rel_model, loss_fn, num_relations, regularizer,
+                          encoder_name=encoder_name)
     elif model == 'bert-dkrl':
-        return models.DKRL(dim, rel_model, loss_fn, num_relations,
-                           encoder_name, regularizer)
+        return models.DKRL(dim, rel_model, loss_fn, num_relations, regularizer,
+                           encoder_name=encoder_name)
+    elif model == 'glove-bow':
+        return models.BOW(rel_model, loss_fn, num_relations, regularizer,
+                          embeddings='data/glove/glove.840B.300d.pt')
+    elif model == 'glove-dkrl':
+        return models.DKRL(dim, rel_model, loss_fn, num_relations, regularizer,
+                           embeddings='data/glove/glove.840B.300d.pt')
+    else:
+        raise ValueError(f'Unkown model {model}')
 
 
 @ex.automain
@@ -165,9 +173,13 @@ def link_prediction(dim, model, rel_model, loss_fn, encoder_name,
                     batch_size,
                     eval_batch_size,
                     max_epochs, num_workers, _run: Run, _log: Logger):
-    tokenizer = BertTokenizer.from_pretrained(encoder_name)
+    drop_stopwords = model in {'bert-bow', 'bert-dkrl',
+                               'glove-bow', 'glove-dkrl'}
 
-    drop_stopwords = model in {'bert-bow', 'bert-dkrl'}
+    if model.startswith('bert') or model == 'bed':
+        tokenizer = BertTokenizer.from_pretrained(encoder_name)
+    else:
+        tokenizer = GloVeTokenizer('data/glove/glove.840B.300d-maps.pt')
 
     train_data = TextGraphDataset('data/wikifb15k-237/train-triples.txt',
                                   ents_file='data/wikifb15k-237/entities.txt',

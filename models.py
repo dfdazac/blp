@@ -84,18 +84,38 @@ class BED(DLP):
         return embs
 
 
-class BertBOW(DLP):
-    """Bag-of-words (BOW) description encoder, with BERT low-level embeddings.
+class PretrainedEmbeddingsLP(DLP):
+    """Description encoder with pretrained embeddings, obtained from BERT or a
+    specified tensor file.
     """
-    def __init__(self, rel_model, loss_fn, num_relations, encoder_name,
-                 regularizer):
-        encoder = BertModel.from_pretrained(encoder_name)
-        embeddings = encoder.embeddings.word_embeddings
-        dim = embeddings.embedding_dim
+    def __init__(self, rel_model, loss_fn, num_relations, regularizer,
+                 dim=None, encoder_name=None, embeddings=None):
+        if not encoder_name and not embeddings:
+            raise ValueError('Must provided one of encoder_name or embeddings')
+
+        if encoder_name is not None:
+            encoder = BertModel.from_pretrained(encoder_name)
+            embeddings = encoder.embeddings.word_embeddings
+        else:
+            emb_tensor = torch.load(embeddings)
+            num_embeddings, embedding_dim = emb_tensor.shape
+            embeddings = nn.Embedding(num_embeddings, embedding_dim)
+            embeddings.weight.data = emb_tensor
+
+        if dim is None:
+            dim = embeddings.embedding_dim
+
         super().__init__(dim, rel_model, loss_fn, num_relations, regularizer)
 
         self.embeddings = embeddings
 
+    def encode(self, text_tok, text_mask):
+        raise NotImplementedError
+
+
+class BOW(PretrainedEmbeddingsLP):
+    """Bag-of-words (BOW) description encoder, with BERT low-level embeddings.
+    """
     def encode(self, text_tok, text_mask):
         # Extract average of word embeddings
         embs = self.embeddings(text_tok)
@@ -106,20 +126,18 @@ class BertBOW(DLP):
         return embs
 
 
-class DKRL(DLP):
-    """Description-Embodied Knowledge Represen- tation Learning (DKRL) with CNN
+class DKRL(PretrainedEmbeddingsLP):
+    """Description-Embodied Knowledge Representation Learning (DKRL) with CNN
     encoder, after
     Zuo, Yukun, et al. "Representation learning of knowledge graphs with
     entity attributes and multimedia descriptions."
     """
 
-    def __init__(self, dim, rel_model, loss_fn, num_relations, encoder_name,
-                 regularizer):
-        encoder = BertModel.from_pretrained(encoder_name)
-        embeddings = encoder.embeddings.word_embeddings
-        super().__init__(dim, rel_model, loss_fn, num_relations, regularizer)
+    def __init__(self, dim, rel_model, loss_fn, num_relations, regularizer,
+                 encoder_name=None, embeddings=None):
+        super().__init__(rel_model, loss_fn, num_relations, regularizer,
+                         dim, encoder_name, embeddings)
 
-        self.embeddings = embeddings
         emb_dim = self.embeddings.embedding_dim
         self.cnn = nn.Sequential(nn.Conv1d(emb_dim, self.dim, kernel_size=2),
                                  nn.MaxPool1d(kernel_size=4),

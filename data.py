@@ -139,8 +139,7 @@ class TextGraphDataset(GraphDataset):
     """
     def __init__(self, triples_file, ents_file=None, rels_file=None,
                  text_file=None, max_len=None, neg_samples=1,
-                 tokenizer: transformers.PreTrainedTokenizer=None,
-                 drop_stopwords=False):
+                 tokenizer=None, drop_stopwords=False):
         super().__init__(triples_file, ents_file, rels_file)
 
         if text_file is not None or tokenizer is not None:
@@ -277,6 +276,21 @@ class TextGraphDataset(GraphDataset):
 
     def graph_negative_sampling(self, data_list):
         return super().negative_sampling(data_list)
+
+
+class GloVeTokenizer:
+    def __init__(self, vocab_dict_file):
+        self.word2idx = torch.load(vocab_dict_file)
+
+    def encode(self, text, max_length, return_tensors):
+        tokens = nltk.word_tokenize(text)
+        encoded = [self.word2idx.get(t, self.word2idx[UNK]) for t in tokens]
+        encoded = [encoded[:max_length]]
+
+        if return_tensors:
+            encoded = torch.tensor(encoded)
+
+        return encoded
 
 
 def test_text_graph_dataset():
