@@ -38,6 +38,23 @@ def file_to_ids(file_path):
     return str2id
 
 
+def get_negative_sampling_indices(batch_size, num_negatives):
+    """"Obtain indices for negative sampling within a batch"""
+    num_ents = batch_size * 2
+    idx = torch.arange(num_ents).reshape(batch_size, 2)
+    zeros = torch.zeros(batch_size, 2)
+
+    head_weights = torch.ones(batch_size, num_ents, dtype=torch.float)
+    head_weights.scatter_(1, idx, zeros)
+    head_idx = head_weights.multinomial(num_negatives, replacement=True)
+
+    tail_weights = (head_weights < 1).float()
+    tail_idx = tail_weights.multinomial(num_negatives, replacement=True)
+
+    neg_idx = torch.stack((head_idx, tail_idx), dim=1)
+    return neg_idx
+
+
 class GraphDataset(Dataset):
     """A Dataset storing the triples of a Knowledge Graph.
 
@@ -49,7 +66,7 @@ class GraphDataset(Dataset):
             entities and relations to IDs are saved to disk (for reuse with
             other datasets).
     """
-    def __init__(self, triples_file, write_maps_file=False):
+    def __init__(self, triples_file, neg_samples=None, write_maps_file=False):
         base_path = osp.dirname(triples_file)
         self.out_path = osp.join(base_path, 'processed')
         maps_path = osp.join(self.out_path, 'maps.pt')
@@ -93,6 +110,7 @@ class GraphDataset(Dataset):
         self.num_triples = self.triples.shape[0]
         self.base_path = base_path
         self.maps_path = maps_path
+        self.neg_samples = neg_samples
 
     def __getitem__(self, index):
         return self.triples[index]
@@ -105,19 +123,10 @@ class GraphDataset(Dataset):
         corrupted triples where either the subject or object are replaced
         by a random entity. Use as a collate_fn for a DataLoader.
         """
+        batch_size = len(data_list)
         pos_pairs, rels = torch.stack(data_list).split(2, dim=1)
-        num_triples = pos_pairs.shape[0]
-
-        # Randomly swap head or tail for a random entity
-        corrupt_pos = torch.randint(high=2, size=[num_triples])
-        corrupt_idx = torch.randint(high=self.num_ents, size=[num_triples])
-        corrupt_ent = self.entities[corrupt_idx]
-        triple_idx = torch.arange(num_triples)
-
-        neg_pairs = pos_pairs.clone()
-        neg_pairs[triple_idx, corrupt_pos] = corrupt_ent
-
-        return pos_pairs, neg_pairs, rels
+        neg_idx = get_negative_sampling_indices(batch_size, self.neg_samples)
+        return pos_pairs, rels, neg_idx
 
 
 class TextGraphDataset(GraphDataset):
@@ -140,7 +149,7 @@ class TextGraphDataset(GraphDataset):
     """
     def __init__(self, triples_file, max_len, neg_samples, tokenizer,
                  drop_stopwords, write_maps_file=False):
-        super().__init__(triples_file, write_maps_file)
+        super().__init__(triples_file, neg_samples, write_maps_file)
 
         maps = torch.load(self.maps_path)
         ent_ids = maps['ent_ids']
@@ -186,8 +195,6 @@ class TextGraphDataset(GraphDataset):
             # Last cell contains sequence length
             self.name_data[ent_id, -1] = name_len
             self.text_data[ent_id, -1] = text_len
-
-        self.neg_samples = neg_samples
 
     @staticmethod
     def get_batch_data(data, ent_ids):
@@ -244,38 +251,9 @@ class TextGraphDataset(GraphDataset):
         pos_pairs, rels = torch.stack(data_list).split(2, dim=1)
         text_tok, text_mask, text_len = self.get_entity_description(pos_pairs)
 
-        # Obtain indices for negative sampling within the batch
-        num_ents = batch_size * 2
-        idx = torch.arange(num_ents).reshape(batch_size, 2)
-        zeros = torch.zeros(batch_size, 2)
-
-        head_weights = torch.ones(batch_size, num_ents, dtype=torch.float)
-        head_weights.scatter_(1, idx, zeros)
-        head_idx = head_weights.multinomial(self.neg_samples, replacement=True)
-
-        tail_weights = (head_weights < 1).float()
-        tail_idx = tail_weights.multinomial(self.neg_samples, replacement=True)
-
-        neg_idx = torch.stack((head_idx, tail_idx), dim=1)
+        neg_idx = get_negative_sampling_indices(batch_size, self.neg_samples)
 
         return text_tok, text_mask, rels, neg_idx
-
-    def negative_sampling(self, data_list):
-        pos_pairs, neg_pairs, rels = super().negative_sampling(data_list)
-        split = pos_pairs.shape[0]
-        pairs = torch.cat((pos_pairs, neg_pairs))
-
-        tokens, masks = self.get_entity_name_description(pairs)
-
-        # Recover positive/negative split
-        pos_pairs_tokens, neg_pairs_tokens = tokens.split(split, dim=0)
-        pos_pairs_masks, neg_pairs_masks = masks.split(split, dim=0)
-
-        return (pos_pairs_tokens, pos_pairs_masks,
-                neg_pairs_tokens, neg_pairs_masks, rels)
-
-    def graph_negative_sampling(self, data_list):
-        return super().negative_sampling(data_list)
 
 
 class GloVeTokenizer:

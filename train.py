@@ -192,6 +192,7 @@ def link_prediction(dataset, dim, model, rel_model, loss_fn, encoder_name,
 
     if model == 'transductive':
         train_data = GraphDataset(triples_file=f'data/{dataset}/train.txt',
+                                  neg_samples=num_negatives,
                                   write_maps_file=True)
     else:
         train_data = TextGraphDataset(f'data/{dataset}/train.txt', max_len,
