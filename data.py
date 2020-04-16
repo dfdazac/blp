@@ -294,19 +294,12 @@ class GloVeTokenizer:
 
 
 def test_text_graph_dataset():
-    tok = transformers.AlbertTokenizer.from_pretrained('albert-base-v2')
-    gtr = TextGraphDataset('data/wikifb15k237/train-triples.txt',
-                           ents_file='data/wikifb15k237/entities.txt',
-                           rels_file='data/wikifb15k237/relations.txt',
-                           text_file='data/wikifb15k237/descriptions.txt',
-                           tokenizer=tok)
-    gva = TextGraphDataset('data/wikifb15k237/valid-triples.txt')
-    gte = TextGraphDataset('data/wikifb15k237/test-triples.txt')
-
     from torch.utils.data import DataLoader
 
-    loader = DataLoader(gtr, batch_size=8, collate_fn=gtr.collate_text,
-                        shuffle=True)
+    tok = transformers.AlbertTokenizer.from_pretrained('albert-base-v2')
+    gtr = TextGraphDataset('data/wikifb15k237/train-triples.txt', max_len=32,
+                           neg_samples=32, tokenizer=tok, drop_stopwords=False)
+    loader = DataLoader(gtr, batch_size=8, collate_fn=gtr.collate_fn)
     data = next(iter(loader))
 
     print('Done')
