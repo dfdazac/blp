@@ -36,32 +36,27 @@ class LinkPrediction(nn.Module):
             raise ValueError(f'Unkown loss function {loss_fn}')
 
     def encode(self, *args, **kwargs):
+        ent_emb = self._encode_entity(*args, **kwargs)
+        if self.normalize_embs:
+            ent_emb = F.normalize(ent_emb, dim=-1)
+
+        return ent_emb
+
+    def _encode_entity(self, *args, **kwargs):
         raise NotImplementedError
 
     def forward(self, *args, **kwargs):
         raise NotImplementedError
 
-
-class InductiveLinkPrediction(LinkPrediction):
-    """Description-based Link Prediction (DLP)."""
-    def encode(self, text_tok, text_mask):
-        raise NotImplementedError
-
-    def forward(self, text_tok, text_mask, rels, neg_idx):
-        batch_size, _, num_text_tokens = text_tok.shape
-
-        # Encode text into an entity representation from its description
-        embs = self.encode(text_tok.view(-1, num_text_tokens),
-                           text_mask.view(-1, num_text_tokens))
-        embs = embs.view(batch_size, 2, -1)
-
+    def compute_loss(self, ent_embs, rels, neg_idx):
+        batch_size = ent_embs.shape[0]
         # Scores for positive samples
         rels = self.rel_emb(rels)
-        heads, tails = torch.chunk(embs, chunks=2, dim=1)
+        heads, tails = torch.chunk(ent_embs, chunks=2, dim=1)
         pos_scores = self.score_fn(heads, tails, rels)
 
         # Scores for negative samples
-        neg_embs = embs.view(batch_size * 2, -1)[neg_idx]
+        neg_embs = ent_embs.view(batch_size * 2, -1)[neg_idx]
         heads, tails = torch.chunk(neg_embs, chunks=2, dim=1)
         neg_scores = self.score_fn(heads.squeeze(), tails.squeeze(), rels)
 
@@ -71,6 +66,22 @@ class InductiveLinkPrediction(LinkPrediction):
             loss += self.regularizer * l2_regularization(heads, tails, rels)
 
         return loss
+
+
+class InductiveLinkPrediction(LinkPrediction):
+    """Description-based Link Prediction (DLP)."""
+    def _encode_entity(self, text_tok, text_mask):
+        raise NotImplementedError
+
+    def forward(self, text_tok, text_mask, rels, neg_idx):
+        batch_size, _, num_text_tokens = text_tok.shape
+
+        # Encode text into an entity representation from its description
+        ent_embs = self.encode(text_tok.view(-1, num_text_tokens),
+                               text_mask.view(-1, num_text_tokens))
+        ent_embs = ent_embs.view(batch_size, 2, -1)
+
+        return self.compute_loss(ent_embs, rels, neg_idx)
 
 
 class BertEmbeddingsLP(InductiveLinkPrediction):
@@ -84,14 +95,10 @@ class BertEmbeddingsLP(InductiveLinkPrediction):
         hidden_size = self.encoder.config.hidden_size
         self.enc_linear = nn.Linear(hidden_size, self.dim, bias=False)
 
-    def encode(self, text_tok, text_mask):
+    def _encode_entity(self, text_tok, text_mask):
         # Extract BERT representation of [CLS] token
         embs = self.encoder(text_tok, text_mask)[0][:, 0]
-
         embs = self.enc_linear(embs)
-        if self.normalize_embs:
-            embs = F.normalize(embs, dim=-1)
-
         return embs
 
 
@@ -120,14 +127,14 @@ class WordEmbeddingsLP(InductiveLinkPrediction):
 
         self.embeddings = embeddings
 
-    def encode(self, text_tok, text_mask):
+    def _encode_entity(self, text_tok, text_mask):
         raise NotImplementedError
 
 
 class BOW(WordEmbeddingsLP):
     """Bag-of-words (BOW) description encoder, with BERT low-level embeddings.
     """
-    def encode(self, text_tok, text_mask):
+    def _encode_entity(self, text_tok, text_mask):
         # Extract average of word embeddings
         embs = self.embeddings(text_tok)
         lengths = torch.sum(text_mask, dim=-1, keepdim=True)
@@ -157,7 +164,7 @@ class DKRL(WordEmbeddingsLP):
                                  nn.AdaptiveAvgPool1d(1),
                                  nn.Tanh())
 
-    def encode(self, text_tok, text_mask):
+    def _encode_entity(self, text_tok, text_mask):
         # Extract word embeddings and mask padding
         embs = self.embeddings(text_tok) * text_mask.unsqueeze(dim=-1)
         embs = embs.transpose(1, 2)
@@ -173,28 +180,12 @@ class TransductiveLinkPrediction(LinkPrediction):
         self.ent_emb = nn.Embedding(num_entities, dim)
         nn.init.xavier_uniform_(self.ent_emb.weight.data)
 
-    def encode(self, entities):
-        embs = self.ent_emb(entities)
-        if self.normalize_embs:
-            embs = F.normalize(embs, dim=-1)
-        return embs
+    def _encode_entity(self, entities):
+        return self.ent_emb(entities)
 
-    def forward(self, pos_pairs, neg_pairs, rels):
-        rels = self.rel_emb(rels)
-        pos_embs = self.encode(pos_pairs)
-        heads, tails = torch.chunk(pos_embs, chunks=2, dim=1)
-        pos_scores = self.score_fn(heads, tails, rels)
-
-        neg_embs = self.encode(neg_pairs)
-        heads, tails = torch.chunk(neg_embs, chunks=2, dim=1)
-        neg_scores = self.score_fn(heads, tails, rels)
-
-        loss = self.loss_fn(pos_scores, neg_scores)
-
-        if self.regularizer > 0:
-            loss += self.regularizer * l2_regularization(heads, tails, rels)
-
-        return loss
+    def forward(self, pos_pairs, rels, neg_idx):
+        embs = self.encode(pos_pairs)
+        return self.compute_loss(embs, rels, neg_idx)
 
 
 def transe_score(heads, tails, rels):
