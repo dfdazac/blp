@@ -50,8 +50,6 @@ class DLP(nn.Module):
         heads, tails = torch.chunk(embs, chunks=2, dim=1)
         pos_scores = self.score_fn(heads, tails, rels)
 
-        reg_loss = self.regularizer * l2_regularization(heads, tails, rels)
-
         # Scores for negative samples
         neg_embs = embs.view(batch_size * 2, -1)[neg_idx]
         heads, tails = torch.chunk(neg_embs, chunks=2, dim=1)
@@ -59,7 +57,10 @@ class DLP(nn.Module):
 
         loss = self.loss_fn(pos_scores, neg_scores)
 
-        return loss + reg_loss
+        if self.regularizer > 0:
+            loss += self.regularizer * l2_regularization(heads, tails, rels)
+
+        return loss
 
 
 class BED(DLP):
