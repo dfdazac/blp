@@ -4,8 +4,9 @@ import torch.nn.functional as F
 from transformers import BertModel
 
 
-class DLP(nn.Module):
-    """Description-based Link Prediction (DLP)."""
+class LinkPrediction(nn.Module):
+    """A general link prediction model with a lookup table for relation
+    embeddings."""
     def __init__(self, dim, rel_model, loss_fn, num_relations, regularizer):
         super().__init__()
         self.dim = dim
@@ -25,7 +26,7 @@ class DLP(nn.Module):
             raise ValueError(f'Unknown relational model {rel_model}.')
 
         self.rel_emb = nn.Embedding(num_relations, self.dim)
-        nn.init.xavier_uniform_(self.rel_emb.weight)
+        nn.init.xavier_uniform_(self.rel_emb.weight.data)
 
         if loss_fn == 'margin':
             self.loss_fn = margin_loss
@@ -34,13 +35,22 @@ class DLP(nn.Module):
         else:
             raise ValueError(f'Unkown loss function {loss_fn}')
 
+    def encode(self, *args, **kwargs):
+        raise NotImplementedError
+
+    def forward(self, *args, **kwargs):
+        raise NotImplementedError
+
+
+class DLP(LinkPrediction):
+    """Description-based Link Prediction (DLP)."""
     def encode(self, text_tok, text_mask):
         raise NotImplementedError
 
     def forward(self, text_tok, text_mask, rels, neg_idx):
         batch_size, _, num_text_tokens = text_tok.shape
 
-        # Obtain embeddings for [CLS] token
+        # Encode text into an entity representation from its description
         embs = self.encode(text_tok.view(-1, num_text_tokens),
                            text_mask.view(-1, num_text_tokens))
         embs = embs.view(batch_size, 2, -1)
@@ -154,6 +164,37 @@ class DKRL(PretrainedEmbeddingsLP):
         embs = self.cnn(embs).squeeze()
 
         return embs
+
+
+class TransductiveLinkPrediction(LinkPrediction):
+    def __init__(self, dim, rel_model, loss_fn, num_entities, num_relations,
+                 regularizer):
+        super().__init__(dim, rel_model, loss_fn, num_relations, regularizer)
+        self.ent_emb = nn.Embedding(num_entities, dim)
+        nn.init.xavier_uniform_(self.ent_emb.weight.data)
+
+    def encode(self, entities):
+        embs = self.ent_emb(entities)
+        if self.normalize_embs:
+            embs = F.normalize(embs, dim=-1)
+        return embs
+
+    def forward(self, pos_pairs, neg_pairs, rels):
+        rels = self.rel_emb(rels)
+        pos_embs = self.encode(pos_pairs)
+        heads, tails = torch.chunk(pos_embs, chunks=2, dim=1)
+        pos_scores = self.score_fn(heads, tails, rels)
+
+        neg_embs = self.encode(neg_pairs)
+        heads, tails = torch.chunk(neg_embs, chunks=2, dim=1)
+        neg_scores = self.score_fn(heads, tails, rels)
+
+        loss = self.loss_fn(pos_scores, neg_scores)
+
+        if self.regularizer > 0:
+            loss += self.regularizer * l2_regularization(heads, tails, rels)
+
+        return loss
 
 
 def transe_score(heads, tails, rels):

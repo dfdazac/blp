@@ -10,7 +10,7 @@ from sacred import Experiment
 from sacred.observers import MongoObserver
 from transformers import BertTokenizer, get_linear_schedule_with_warmup
 
-from data import TextGraphDataset, GloVeTokenizer
+from data import GraphDataset, TextGraphDataset, GloVeTokenizer
 import models
 import utils
 
@@ -28,15 +28,15 @@ if all([uri, database]):
 @ex.config
 def config():
     dim = 128
-    model = 'glove-dkrl'
-    rel_model = 'transe'
-    loss_fn = 'margin'
+    model = 'transductive'
+    rel_model = 'complex'
+    loss_fn = 'nll'
     encoder_name = 'bert-base-cased'
     regularizer = 1e-2
     max_len = 32
     num_negatives = 64
-    lr = 2e-5
-    use_scheduler = True
+    lr = 1e-5
+    use_scheduler = False
     batch_size = 64
     eval_batch_size = 128
     max_epochs = 40
@@ -57,23 +57,27 @@ def eval_link_prediction(model, triples_loader, text_dataset, entities,
     mrr_filt = 0.0
     hits_at_k_filt = {pos: 0.0 for pos in hit_positions}
 
-    num_entities = entities.shape[0]
-    ent2idx = utils.make_ent2idx(entities)
-
-    # Create embedding lookup table with text encoder
-    ent_emb = torch.zeros((num_entities, model.dim), dtype=torch.float,
-                          device=device)
-    idx = 0
-    while idx < num_entities:
-        # Get a batch of entity IDs
-        batch_ents = entities[idx:idx + triples_loader.batch_size]
-        # Get their corresponding descriptions
-        data = text_dataset.get_entity_description(batch_ents)
-        text_tok, text_mask, text_len = data
-        # Encode with BERT and store result
-        batch_emb = model.encode(text_tok.to(device), text_mask.to(device))
-        ent_emb[idx:idx + batch_ents.shape[0]] = batch_emb
-        idx += triples_loader.batch_size
+    if hasattr(text_dataset, 'text_data'):
+        num_entities = entities.shape[0]
+        ent2idx = utils.make_ent2idx(entities)
+        # Create embedding lookup table with text encoder
+        ent_emb = torch.zeros((num_entities, model.dim), dtype=torch.float,
+                              device=device)
+        idx = 0
+        while idx < num_entities:
+            # Get a batch of entity IDs
+            batch_ents = entities[idx:idx + triples_loader.batch_size]
+            # Get their corresponding descriptions
+            data = text_dataset.get_entity_description(batch_ents)
+            text_tok, text_mask, text_len = data
+            # Encode with BERT and store result
+            batch_emb = model.encode(text_tok.to(device), text_mask.to(device))
+            ent_emb[idx:idx + batch_ents.shape[0]] = batch_emb
+            idx += triples_loader.batch_size
+    else:
+        ent_emb = model.ent_emb.weight
+        num_entities = ent_emb.shape[0]
+        ent2idx = torch.arange(num_entities)
 
     ent_emb = ent_emb.unsqueeze(0)
 
@@ -146,8 +150,8 @@ def eval_link_prediction(model, triples_loader, text_dataset, entities,
     return ent_emb, mrr
 
 
-def get_model(model, dim, rel_model, loss_fn, num_relations, encoder_name,
-              regularizer):
+def get_model(model, dim, rel_model, loss_fn, num_entities, num_relations,
+              encoder_name, regularizer):
     if model == 'bed':
         return models.BED(dim, rel_model, loss_fn, num_relations, encoder_name,
                           regularizer)
@@ -163,6 +167,10 @@ def get_model(model, dim, rel_model, loss_fn, num_relations, encoder_name,
     elif model == 'glove-dkrl':
         return models.DKRL(dim, rel_model, loss_fn, num_relations, regularizer,
                            embeddings='data/glove/glove.840B.300d.pt')
+    elif model == 'transductive':
+        return models.TransductiveLinkPrediction(dim, rel_model, loss_fn,
+                                                 num_entities, num_relations,
+                                                 regularizer)
     else:
         raise ValueError(f'Unkown model {model}')
 
@@ -181,23 +189,29 @@ def link_prediction(dim, model, rel_model, loss_fn, encoder_name,
     else:
         tokenizer = GloVeTokenizer('data/glove/glove.840B.300d-maps.pt')
 
-    train_data = TextGraphDataset('data/wikifb15k-237/train-triples.txt',
+    if model == 'transductive':
+        train_data = GraphDataset(triples_file='data/wikifb15k-237/train.txt',
                                   ents_file='data/wikifb15k-237/entities.txt',
-                                  rels_file='data/wikifb15k-237/relations.txt',
-                                  text_file='data/wikifb15k-237/descriptions.txt',
-                                  max_len=max_len, neg_samples=num_negatives,
-                                  tokenizer=tokenizer,
-                                  drop_stopwords=drop_stopwords)
+                                  rels_file='data/wikifb15k-237/relations.txt')
+    else:
+        train_data = TextGraphDataset('data/wikifb15k-237/train.txt',
+                                      ents_file='data/wikifb15k-237/entities.txt',
+                                      rels_file='data/wikifb15k-237/relations.txt',
+                                      text_file='data/wikifb15k-237/descriptions.txt',
+                                      max_len=max_len, neg_samples=num_negatives,
+                                      tokenizer=tokenizer,
+                                      drop_stopwords=drop_stopwords)
+
     train_loader = DataLoader(train_data, batch_size=batch_size, shuffle=True,
-                              collate_fn=train_data.collate_text,
+                              collate_fn=train_data.negative_sampling,
                               num_workers=num_workers, drop_last=True)
     train_eval_loader = DataLoader(train_data, batch_size=eval_batch_size)
 
-    valid_data = TextGraphDataset('data/wikifb15k-237/valid-triples.txt',
+    valid_data = TextGraphDataset('data/wikifb15k-237/valid.txt',
                                   max_len=max_len)
     valid_loader = DataLoader(valid_data, batch_size=eval_batch_size)
 
-    test_data = TextGraphDataset('data/wikifb15k-237/test-triples.txt',
+    test_data = TextGraphDataset('data/wikifb15k-237/test.txt',
                                  max_len=max_len)
     test_loader = DataLoader(test_data, batch_size=eval_batch_size)
 
@@ -216,8 +230,9 @@ def link_prediction(dim, model, rel_model, loss_fn, encoder_name,
     train_val_ent = torch.tensor(list(train_val_ent))
     train_val_test_ent = torch.tensor(list(train_val_test_ent))
 
-    model = get_model(model, dim, rel_model, loss_fn, train_data.num_rels,
-                      encoder_name, regularizer).to(device)
+    model = get_model(model, dim, rel_model, loss_fn, len(train_val_test_ent),
+                      train_data.num_rels, encoder_name, regularizer)
+    model = model.to(device)
 
     optimizer = Adam(model.parameters(), lr=lr)
     total_steps = len(train_loader) * max_epochs
