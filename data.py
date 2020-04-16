@@ -45,12 +45,11 @@ class GraphDataset(Dataset):
         triples_file: str, path to the file containing triples. This is a
             text file where each line contains a triple of the form
             'subject predicate object'
-        ents_file: str, path to file with a list of unique entities, possibly
-            shared between Datasets.
-        rels_file: str, path to file with a list of unique relations, possibly
-            shared between Datasets.
+        write_maps_file: bool, if set to True, dictionaries mapping
+            entities and relations to IDs are saved to disk (for reuse with
+            other datasets).
     """
-    def __init__(self, triples_file, ents_file=None, rels_file=None):
+    def __init__(self, triples_file, write_maps_file=False):
         base_path = osp.dirname(triples_file)
         self.out_path = osp.join(base_path, 'processed')
         maps_path = osp.join(self.out_path, 'maps.pt')
@@ -59,13 +58,15 @@ class GraphDataset(Dataset):
             os.mkdir(self.out_path)
 
         # Create or load maps from entity and relation strings to unique IDs
-        if not ents_file or not rels_file:
+        if not write_maps_file:
             if not osp.exists(maps_path):
                 raise ValueError('Maps file not found.')
 
             maps = torch.load(maps_path)
             ent_ids, rel_ids = maps['ent_ids'], maps['rel_ids']
         else:
+            ents_file = osp.join(base_path, 'entities.txt')
+            rels_file = osp.join(base_path, 'relations.txt')
             ent_ids = file_to_ids(ents_file)
             rel_ids = file_to_ids(rels_file)
 
@@ -90,6 +91,7 @@ class GraphDataset(Dataset):
         self.num_rels = len(relations)
         self.entities = torch.tensor([ent_ids[ent] for ent in entities])
         self.num_triples = self.triples.shape[0]
+        self.base_path = base_path
         self.maps_path = maps_path
 
     def __getitem__(self, index):
@@ -98,7 +100,7 @@ class GraphDataset(Dataset):
     def __len__(self):
         return self.num_triples
 
-    def negative_sampling(self, data_list):
+    def collate_fn(self, data_list):
         """Given a batch of triples, return it together with a batch of
         corrupted triples where either the subject or object are replaced
         by a random entity. Use as a collate_fn for a DataLoader.
@@ -120,72 +122,70 @@ class GraphDataset(Dataset):
 
 class TextGraphDataset(GraphDataset):
     """A dataset storing a graph, and textual descriptions of its entities.
-    Note: if text_data is not provided, both text_file and tokenizer must be
-    given.
 
     Args:
         triples_file: str, path to the file containing triples. This is a
             text file where each line contains a triple of the form
             'subject predicate object'
-        ents_file: str, path to file with a list of unique entities, possibly
-            shared between Datasets.
-        rels_file: str, path to file with a list of unique relations, possibly
-            shared between Datasets.
-        text_file: str, path to the file containing entity descriptions.
-            Assumes one description per line for each entity, starting with
-            the entity ID, followed by its description.
-        tokenizer: transformers.PreTrainedTokenizer
+        max_len: int, maximum number of tokens to read per description.
+        neg_samples: int, number of negative samples to get per triple
+        tokenizer: transformers.PreTrainedTokenizer or GloVeTokenizer, used
+            to tokenize the text.
+        drop_stopwords: bool, if set to True, punctuation and stopwords are
+            dropped from entity descriptions.
+        write_maps_file: bool, if set to True, dictionaries mapping
+            entities and relations to IDs are saved to disk (for reuse with
+            other datasets).
         drop_stopwords: bool
     """
-    def __init__(self, triples_file, ents_file=None, rels_file=None,
-                 text_file=None, max_len=None, neg_samples=1,
-                 tokenizer=None, drop_stopwords=False):
-        super().__init__(triples_file, ents_file, rels_file)
+    def __init__(self, triples_file, max_len, neg_samples, tokenizer,
+                 drop_stopwords, write_maps_file=False):
+        super().__init__(triples_file, write_maps_file)
 
-        if text_file is not None or tokenizer is not None:
-            maps = torch.load(self.maps_path)
-            ent_ids = maps['ent_ids']
+        maps = torch.load(self.maps_path)
+        ent_ids = maps['ent_ids']
 
-            # Read descriptions, and build a map from entity ID to text
-            text_lines = open(text_file)
-            if max_len is None:
-                max_len = tokenizer.max_len
+        # Read descriptions, and build a map from entity ID to text
+        text_file = osp.join(self.base_path, 'descriptions.txt')
+        text_lines = open(text_file)
+        if max_len is None:
+            max_len = tokenizer.max_len
 
-            self.text_data = torch.zeros((len(ent_ids), max_len + 1),
-                                         dtype=torch.long)
-            self.name_data = torch.zeros((len(ent_ids), max_len + 1),
-                                         dtype=torch.long)
+        self.text_data = torch.zeros((len(ent_ids), max_len + 1),
+                                     dtype=torch.long)
+        self.name_data = torch.zeros((len(ent_ids), max_len + 1),
+                                     dtype=torch.long)
 
-            for line in text_lines:
-                name_start = line.find(' ')
-                name_end = line.find(DELIM)
+        for line in text_lines:
+            name_start = line.find(' ')
+            name_end = line.find(DELIM)
 
-                name = line[name_start:name_end].strip()
-                text = line[name_end + len(DELIM):].strip()
+            name = line[name_start:name_end].strip()
+            text = line[name_end + len(DELIM):].strip()
 
-                entity = line[:name_start].strip()
-                ent_id = ent_ids[entity]
+            entity = line[:name_start].strip()
+            ent_id = ent_ids[entity]
 
-                if drop_stopwords:
-                    tokens = nltk.word_tokenize(text)
-                    text = ' '.join([t for t in tokens if t.lower() not in DROPPED])
+            if drop_stopwords:
+                tokens = nltk.word_tokenize(text)
+                text = ' '.join([t for t in tokens if t.lower() not in DROPPED])
 
-                text_tokens = tokenizer.encode(text,
-                                               max_length=max_len,
-                                               return_tensors='pt')
-                name_tokens = tokenizer.encode(name,
-                                               max_length=max_len,
-                                               return_tensors='pt')
+            text_tokens = tokenizer.encode(text,
+                                           max_length=max_len,
+                                           return_tensors='pt')
+            name_tokens = tokenizer.encode(name,
+                                           max_length=max_len,
+                                           return_tensors='pt')
 
-                text_len = text_tokens.shape[1]
-                name_len = name_tokens.shape[1]
+            text_len = text_tokens.shape[1]
+            name_len = name_tokens.shape[1]
 
-                # Starting slice of row contains token IDs
-                self.name_data[ent_id, :name_len] = name_tokens
-                self.text_data[ent_id, :text_len] = text_tokens
-                # Last cell contains sequence length
-                self.name_data[ent_id, -1] = name_len
-                self.text_data[ent_id, -1] = text_len
+            # Starting slice of row contains token IDs
+            self.name_data[ent_id, :name_len] = name_tokens
+            self.text_data[ent_id, :text_len] = text_tokens
+            # Last cell contains sequence length
+            self.name_data[ent_id, -1] = name_len
+            self.text_data[ent_id, -1] = text_len
 
         self.neg_samples = neg_samples
 
@@ -231,7 +231,7 @@ class TextGraphDataset(GraphDataset):
                                                             ent_ids)
         return text_tok, text_mask, text_len
 
-    def collate_text(self, data_list):
+    def collate_fn(self, data_list):
         """Given a batch of triples, return it in the form of
         entity descriptions, and the relation types between them.
         Use as a collate_fn for a DataLoader.
@@ -295,13 +295,13 @@ class GloVeTokenizer:
 
 def test_text_graph_dataset():
     tok = transformers.AlbertTokenizer.from_pretrained('albert-base-v2')
-    gtr = TextGraphDataset('data/wikifb15k-237/train-triples.txt',
-                           ents_file='data/wikifb15k-237/entities.txt',
-                           rels_file='data/wikifb15k-237/relations.txt',
-                           text_file='data/wikifb15k-237/descriptions.txt',
+    gtr = TextGraphDataset('data/wikifb15k237/train-triples.txt',
+                           ents_file='data/wikifb15k237/entities.txt',
+                           rels_file='data/wikifb15k237/relations.txt',
+                           text_file='data/wikifb15k237/descriptions.txt',
                            tokenizer=tok)
-    gva = TextGraphDataset('data/wikifb15k-237/valid-triples.txt')
-    gte = TextGraphDataset('data/wikifb15k-237/test-triples.txt')
+    gva = TextGraphDataset('data/wikifb15k237/valid-triples.txt')
+    gte = TextGraphDataset('data/wikifb15k237/test-triples.txt')
 
     from torch.utils.data import DataLoader
 

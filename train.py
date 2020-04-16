@@ -27,15 +27,16 @@ if all([uri, database]):
 
 @ex.config
 def config():
+    dataset = 'wikifb15k237'
     dim = 128
     model = 'transductive'
-    rel_model = 'complex'
-    loss_fn = 'nll'
+    rel_model = 'transe'
+    loss_fn = 'margin'
     encoder_name = 'bert-base-cased'
     regularizer = 1e-2
     max_len = 32
     num_negatives = 64
-    lr = 1e-5
+    lr = 1e-3
     use_scheduler = False
     batch_size = 64
     eval_batch_size = 128
@@ -153,8 +154,8 @@ def eval_link_prediction(model, triples_loader, text_dataset, entities,
 def get_model(model, dim, rel_model, loss_fn, num_entities, num_relations,
               encoder_name, regularizer):
     if model == 'bed':
-        return models.BED(dim, rel_model, loss_fn, num_relations, encoder_name,
-                          regularizer)
+        return models.BertEmbeddingsLP(dim, rel_model, loss_fn, num_relations,
+                                       encoder_name, regularizer)
     elif model == 'bert-bow':
         return models.BOW(rel_model, loss_fn, num_relations, regularizer,
                           encoder_name=encoder_name)
@@ -176,7 +177,7 @@ def get_model(model, dim, rel_model, loss_fn, num_entities, num_relations,
 
 
 @ex.automain
-def link_prediction(dim, model, rel_model, loss_fn, encoder_name,
+def link_prediction(dataset, dim, model, rel_model, loss_fn, encoder_name,
                     regularizer, max_len, num_negatives, lr, use_scheduler,
                     batch_size,
                     eval_batch_size,
@@ -190,30 +191,24 @@ def link_prediction(dim, model, rel_model, loss_fn, encoder_name,
         tokenizer = GloVeTokenizer('data/glove/glove.840B.300d-maps.pt')
 
     if model == 'transductive':
-        train_data = GraphDataset(triples_file='data/wikifb15k-237/train.txt',
-                                  ents_file='data/wikifb15k-237/entities.txt',
-                                  rels_file='data/wikifb15k-237/relations.txt')
+        train_data = GraphDataset(triples_file=f'data/{dataset}/train.txt',
+                                  write_maps_file=True)
     else:
-        train_data = TextGraphDataset('data/wikifb15k-237/train.txt',
-                                      ents_file='data/wikifb15k-237/entities.txt',
-                                      rels_file='data/wikifb15k-237/relations.txt',
-                                      text_file='data/wikifb15k-237/descriptions.txt',
-                                      max_len=max_len, neg_samples=num_negatives,
-                                      tokenizer=tokenizer,
-                                      drop_stopwords=drop_stopwords)
+        train_data = TextGraphDataset(f'data/{dataset}/train.txt', max_len,
+                                      num_negatives, tokenizer,
+                                      drop_stopwords, write_maps_file=True)
 
-    train_loader = DataLoader(train_data, batch_size=batch_size, shuffle=True,
-                              collate_fn=train_data.negative_sampling,
+    train_loader = DataLoader(train_data, batch_size, shuffle=True,
+                              collate_fn=train_data.collate_fn,
                               num_workers=num_workers, drop_last=True)
-    train_eval_loader = DataLoader(train_data, batch_size=eval_batch_size)
 
-    valid_data = TextGraphDataset('data/wikifb15k-237/valid.txt',
-                                  max_len=max_len)
-    valid_loader = DataLoader(valid_data, batch_size=eval_batch_size)
+    train_eval_loader = DataLoader(train_data, eval_batch_size)
 
-    test_data = TextGraphDataset('data/wikifb15k-237/test.txt',
-                                 max_len=max_len)
-    test_loader = DataLoader(test_data, batch_size=eval_batch_size)
+    valid_data = GraphDataset(f'data/{dataset}/valid.txt')
+    valid_loader = DataLoader(valid_data, eval_batch_size)
+
+    test_data = GraphDataset(f'data/{dataset}/test.txt')
+    test_loader = DataLoader(test_data, eval_batch_size)
 
     # Build graph with all triples to compute filtered metrics
     graph = nx.MultiDiGraph()

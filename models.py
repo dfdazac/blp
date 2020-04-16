@@ -42,7 +42,7 @@ class LinkPrediction(nn.Module):
         raise NotImplementedError
 
 
-class DLP(LinkPrediction):
+class InductiveLinkPrediction(LinkPrediction):
     """Description-based Link Prediction (DLP)."""
     def encode(self, text_tok, text_mask):
         raise NotImplementedError
@@ -73,7 +73,7 @@ class DLP(LinkPrediction):
         return loss
 
 
-class BED(DLP):
+class BertEmbeddingsLP(InductiveLinkPrediction):
     """BERT for Entity Descriptions (BED)."""
     def __init__(self, dim, rel_model, loss_fn, num_relations, encoder_name,
                  regularizer):
@@ -95,7 +95,7 @@ class BED(DLP):
         return embs
 
 
-class PretrainedEmbeddingsLP(DLP):
+class WordEmbeddingsLP(InductiveLinkPrediction):
     """Description encoder with pretrained embeddings, obtained from BERT or a
     specified tensor file.
     """
@@ -124,7 +124,7 @@ class PretrainedEmbeddingsLP(DLP):
         raise NotImplementedError
 
 
-class BOW(PretrainedEmbeddingsLP):
+class BOW(WordEmbeddingsLP):
     """Bag-of-words (BOW) description encoder, with BERT low-level embeddings.
     """
     def encode(self, text_tok, text_mask):
@@ -137,7 +137,7 @@ class BOW(PretrainedEmbeddingsLP):
         return embs
 
 
-class DKRL(PretrainedEmbeddingsLP):
+class DKRL(WordEmbeddingsLP):
     """Description-Embodied Knowledge Representation Learning (DKRL) with CNN
     encoder, after
     Zuo, Yukun, et al. "Representation learning of knowledge graphs with
