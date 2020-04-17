@@ -1,4 +1,5 @@
 import torch
+import logging
 
 
 def make_ent2idx(entities):
@@ -96,3 +97,17 @@ def mrr(predictions, ground_truth_idx):
     indices = predictions.argsort(descending=True)
     rankings = (indices == ground_truth_idx).nonzero()[:, 1].float() + 1.0
     return torch.mean(rankings.reciprocal()).item()
+
+
+def get_logger():
+    """Get a default logger that includes a timestamp."""
+    logger = logging.getLogger("")
+    logger.handlers = []
+    ch = logging.StreamHandler()
+    str_fmt = '%(asctime)s - %(levelname)s - %(name)s - %(message)s'
+    formatter = logging.Formatter(str_fmt, datefmt='%H:%M:%S')
+    ch.setFormatter(formatter)
+    logger.addHandler(ch)
+    logger.setLevel('INFO')
+
+    return logger

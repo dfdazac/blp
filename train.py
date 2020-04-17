@@ -18,6 +18,7 @@ OUT_PATH = 'output/'
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 ex = Experiment()
+ex.logger = utils.get_logger()
 # Set up database logs
 uri = os.environ.get('DB_URI')
 database = os.environ.get('DB_NAME')
@@ -164,10 +165,10 @@ def get_model(model, dim, rel_model, loss_fn, num_entities, num_relations,
                            encoder_name=encoder_name)
     elif model == 'glove-bow':
         return models.BOW(rel_model, loss_fn, num_relations, regularizer,
-                          embeddings='data/glove/glove.840B.300d.pt')
+                          embeddings='data/glove/glove.6B.300d.pt')
     elif model == 'glove-dkrl':
         return models.DKRL(dim, rel_model, loss_fn, num_relations, regularizer,
-                           embeddings='data/glove/glove.840B.300d.pt')
+                           embeddings='data/glove/glove.6B.300d.pt')
     elif model == 'transductive':
         return models.TransductiveLinkPrediction(dim, rel_model, loss_fn,
                                                  num_entities, num_relations,
@@ -188,7 +189,7 @@ def link_prediction(dataset, dim, model, rel_model, loss_fn, encoder_name,
     if model.startswith('bert') or model == 'bed':
         tokenizer = BertTokenizer.from_pretrained(encoder_name)
     else:
-        tokenizer = GloVeTokenizer('data/glove/glove.840B.300d-maps.pt')
+        tokenizer = GloVeTokenizer('data/glove/glove.6B.300d-maps.pt')
 
     if model == 'transductive':
         train_data = GraphDataset(triples_file=f'data/{dataset}/train.txt',
