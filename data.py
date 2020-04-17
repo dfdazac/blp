@@ -39,20 +39,50 @@ def file_to_ids(file_path):
 
 
 def get_negative_sampling_indices(batch_size, num_negatives):
-    """"Obtain indices for negative sampling within a batch"""
+    """"Obtain indices for negative sampling within a batch of entity pairs.
+    Indices are sampled from a reshaped array of indices. For example,
+    if there are 4 pairs (batch_size=4), the array of indices is
+        [[0, 1],
+         [2, 3],
+         [4, 5],
+         [6, 7]]
+    From this array, we corrupt either the first or second element of each row.
+    This yields one negative sample.
+    For example, if the positions with a dash are selected,
+        [[0, -],
+         [-, 3],
+         [4, -],
+         [-, 7]]
+    they are then replaced with a random index from a row other than the row
+    to which they belong:
+        [[0, 3],
+         [5, 3],
+         [4, 6],
+         [1, 7]]
+    For convenient indexing of embeddings, the returned array has shape
+    (2, batch_size * num_negatives).
+    """
     num_ents = batch_size * 2
     idx = torch.arange(num_ents).reshape(batch_size, 2)
-    zeros = torch.zeros(batch_size, 2)
 
+    # For each row, sample entities, assigning 0 probability to entities
+    # of the same row
+    zeros = torch.zeros(batch_size, 2)
     head_weights = torch.ones(batch_size, num_ents, dtype=torch.float)
     head_weights.scatter_(1, idx, zeros)
-    head_idx = head_weights.multinomial(num_negatives, replacement=True)
+    random_idx = head_weights.multinomial(num_negatives, replacement=True)
+    random_idx = random_idx.t().flatten()
 
-    tail_weights = (head_weights < 1).float()
-    tail_idx = tail_weights.multinomial(num_negatives, replacement=True)
+    # Select randomly the first or the second column
+    row_selector = torch.arange(batch_size * num_negatives)
+    col_selector = torch.randint(0, 2, [batch_size * num_negatives])
 
-    neg_idx = torch.stack((head_idx, tail_idx), dim=1)
-    return neg_idx
+    # Fill the array of negative samples with the sampled random entities
+    # at the right positions
+    neg_idx = idx.repeat((num_negatives, 1))
+    neg_idx[row_selector, col_selector] = random_idx
+
+    return neg_idx.t()
 
 
 class GraphDataset(Dataset):
