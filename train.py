@@ -186,16 +186,15 @@ def link_prediction(dataset, dim, model, rel_model, loss_fn, encoder_name,
     drop_stopwords = model in {'bert-bow', 'bert-dkrl',
                                'glove-bow', 'glove-dkrl'}
 
-    if model.startswith('bert') or model == 'bed':
-        tokenizer = BertTokenizer.from_pretrained(encoder_name)
-    else:
-        tokenizer = GloVeTokenizer('data/glove/glove.6B.300d-maps.pt')
-
     if model == 'transductive':
         train_data = GraphDataset(triples_file=f'data/{dataset}/train.txt',
                                   neg_samples=num_negatives,
                                   write_maps_file=True)
     else:
+        if model.startswith('bert') or model == 'bed':
+            tokenizer = BertTokenizer.from_pretrained(encoder_name)
+        else:
+            tokenizer = GloVeTokenizer('data/glove/glove.6B.300d-maps.pt')
         train_data = TextGraphDataset(f'data/{dataset}/train.txt', max_len,
                                       num_negatives, tokenizer,
                                       drop_stopwords, write_maps_file=True)
@@ -253,7 +252,7 @@ def link_prediction(dataset, dim, model, rel_model, loss_fn, encoder_name,
 
             train_loss += loss.item()
 
-            if step % 200 == 0:
+            if step % 500 == 0:
                 _log.info(f'Epoch {epoch}/{max_epochs} '
                           f'[{step}/{len(train_loader)}]: {loss.item():.6f}')
                 _run.log_scalar('batch_loss', loss.item())
