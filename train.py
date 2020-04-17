@@ -59,27 +59,34 @@ def eval_link_prediction(model, triples_loader, text_dataset, entities,
     mrr_filt = 0.0
     hits_at_k_filt = {pos: 0.0 for pos in hit_positions}
 
-    if hasattr(text_dataset, 'text_data'):
+    if isinstance(model, models.InductiveLinkPrediction):
         num_entities = entities.shape[0]
         ent2idx = utils.make_ent2idx(entities)
-        # Create embedding lookup table with text encoder
-        ent_emb = torch.zeros((num_entities, model.dim), dtype=torch.float,
-                              device=device)
-        idx = 0
-        while idx < num_entities:
-            # Get a batch of entity IDs
-            batch_ents = entities[idx:idx + triples_loader.batch_size]
-            # Get their corresponding descriptions
+    else:
+        # In the transductive setting we have access to all entities
+        num_entities = model.ent_emb.num_embeddings
+        ent2idx = torch.arange(num_entities)
+        entities = ent2idx
+
+    # Create embedding lookup table for evaluation
+    ent_emb = torch.zeros((num_entities, model.dim), dtype=torch.float,
+                          device=device)
+    idx = 0
+    while idx < num_entities:
+        # Get a batch of entity IDs and encode them
+        batch_ents = entities[idx:idx + triples_loader.batch_size]
+
+        if isinstance(model, models.InductiveLinkPrediction):
+            # Encode with entity descriptions
             data = text_dataset.get_entity_description(batch_ents)
             text_tok, text_mask, text_len = data
-            # Encode with BERT and store result
             batch_emb = model.encode(text_tok.to(device), text_mask.to(device))
-            ent_emb[idx:idx + batch_ents.shape[0]] = batch_emb
-            idx += triples_loader.batch_size
-    else:
-        ent_emb = model.ent_emb.weight
-        num_entities = ent_emb.shape[0]
-        ent2idx = torch.arange(num_entities)
+        else:
+            # Encode from lookup table
+            batch_emb = model.encode(batch_ents.to(device))
+
+        ent_emb[idx:idx + batch_ents.shape[0]] = batch_emb
+        idx += triples_loader.batch_size
 
     ent_emb = ent_emb.unsqueeze(0)
 
