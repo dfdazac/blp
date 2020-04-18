@@ -28,9 +28,9 @@ if all([uri, database]):
 
 @ex.config
 def config():
-    dataset = 'wikifb15k237'
+    dataset = 'FB15k-237'
     dim = 128
-    model = 'transductive'
+    model = 'glove-bow'
     rel_model = 'transe'
     loss_fn = 'margin'
     encoder_name = 'bert-base-cased'
@@ -194,7 +194,7 @@ def link_prediction(dataset, dim, model, rel_model, loss_fn, encoder_name,
                                'glove-bow', 'glove-dkrl'}
 
     if model == 'transductive':
-        train_data = GraphDataset(triples_file=f'data/{dataset}/train.txt',
+        train_data = GraphDataset(triples_file=f'data/{dataset}/train.tsv',
                                   neg_samples=num_negatives,
                                   write_maps_file=True)
     else:
@@ -202,7 +202,7 @@ def link_prediction(dataset, dim, model, rel_model, loss_fn, encoder_name,
             tokenizer = BertTokenizer.from_pretrained(encoder_name)
         else:
             tokenizer = GloVeTokenizer('data/glove/glove.6B.300d-maps.pt')
-        train_data = TextGraphDataset(f'data/{dataset}/train.txt', max_len,
+        train_data = TextGraphDataset(f'data/{dataset}/train.tsv', max_len,
                                       num_negatives, tokenizer,
                                       drop_stopwords, write_maps_file=True)
 
@@ -212,10 +212,10 @@ def link_prediction(dataset, dim, model, rel_model, loss_fn, encoder_name,
 
     train_eval_loader = DataLoader(train_data, eval_batch_size)
 
-    valid_data = GraphDataset(f'data/{dataset}/valid.txt')
+    valid_data = GraphDataset(f'data/{dataset}/dev.tsv')
     valid_loader = DataLoader(valid_data, eval_batch_size)
 
-    test_data = GraphDataset(f'data/{dataset}/test.txt')
+    test_data = GraphDataset(f'data/{dataset}/test.tsv')
     test_loader = DataLoader(test_data, eval_batch_size)
 
     # Build graph with all triples to compute filtered metrics

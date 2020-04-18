@@ -8,17 +8,9 @@ import nltk
 from nltk.corpus import stopwords
 
 UNK = '[UNK]'
-DELIM = '####'
-
-while True:
-    try:
-        STOP_WORDS = stopwords.words('english')
-        break
-    except LookupError:
-        nltk.download('stopwords')
-        nltk.download('punkt')
-        continue
-
+nltk.download('stopwords')
+nltk.download('punkt')
+STOP_WORDS = stopwords.words('english')
 DROPPED = STOP_WORDS + list(string.punctuation)
 
 
@@ -97,12 +89,8 @@ class GraphDataset(Dataset):
             other datasets).
     """
     def __init__(self, triples_file, neg_samples=None, write_maps_file=False):
-        base_path = osp.dirname(triples_file)
-        self.out_path = osp.join(base_path, 'processed')
-        maps_path = osp.join(self.out_path, 'maps.pt')
-
-        if not osp.exists(self.out_path):
-            os.mkdir(self.out_path)
+        directory = osp.dirname(triples_file)
+        maps_path = osp.join(directory, 'maps.pt')
 
         # Create or load maps from entity and relation strings to unique IDs
         if not write_maps_file:
@@ -112,8 +100,8 @@ class GraphDataset(Dataset):
             maps = torch.load(maps_path)
             ent_ids, rel_ids = maps['ent_ids'], maps['rel_ids']
         else:
-            ents_file = osp.join(base_path, 'entities.txt')
-            rels_file = osp.join(base_path, 'relations.txt')
+            ents_file = osp.join(directory, 'entities.txt')
+            rels_file = osp.join(directory, 'relations.txt')
             ent_ids = file_to_ids(ents_file)
             rel_ids = file_to_ids(rels_file)
 
@@ -124,7 +112,12 @@ class GraphDataset(Dataset):
         file = open(triples_file)
         triples = []
         for i, line in enumerate(file):
-            head, rel, tail = line.split()
+            values = line.split()
+            # FB13 and WN11 have duplicate triples for classification,
+            # here we keep the correct triple
+            if len(values) > 3 and values[3] == '-1':
+                continue
+            head, rel, tail = line.split()[:3]
             entities.update([head, tail])
             relations.add(rel)
             triples.append([ent_ids[head], ent_ids[tail], rel_ids[rel]])
@@ -138,7 +131,7 @@ class GraphDataset(Dataset):
         self.num_rels = len(relations)
         self.entities = torch.tensor([ent_ids[ent] for ent in entities])
         self.num_triples = self.triples.shape[0]
-        self.base_path = base_path
+        self.directory = directory
         self.maps_path = maps_path
         self.neg_samples = neg_samples
 
@@ -185,24 +178,20 @@ class TextGraphDataset(GraphDataset):
         ent_ids = maps['ent_ids']
 
         # Read descriptions, and build a map from entity ID to text
-        text_file = osp.join(self.base_path, 'descriptions.txt')
+        text_file = osp.join(self.directory, 'entity2textlong.txt')
+        if not osp.exists(text_file):
+            text_file = osp.join(self.directory, 'entity2text.txt')
         text_lines = open(text_file)
         if max_len is None:
             max_len = tokenizer.max_len
 
         self.text_data = torch.zeros((len(ent_ids), max_len + 1),
                                      dtype=torch.long)
-        self.name_data = torch.zeros((len(ent_ids), max_len + 1),
-                                     dtype=torch.long)
 
         for line in text_lines:
-            name_start = line.find(' ')
-            name_end = line.find(DELIM)
-
-            name = line[name_start:name_end].strip()
-            text = line[name_end + len(DELIM):].strip()
-
-            entity = line[:name_start].strip()
+            entity, text = line.strip().split('\t')
+            if entity not in ent_ids:
+                continue
             ent_id = ent_ids[entity]
 
             if drop_stopwords:
@@ -212,60 +201,26 @@ class TextGraphDataset(GraphDataset):
             text_tokens = tokenizer.encode(text,
                                            max_length=max_len,
                                            return_tensors='pt')
-            name_tokens = tokenizer.encode(name,
-                                           max_length=max_len,
-                                           return_tensors='pt')
 
             text_len = text_tokens.shape[1]
-            name_len = name_tokens.shape[1]
 
             # Starting slice of row contains token IDs
-            self.name_data[ent_id, :name_len] = name_tokens
             self.text_data[ent_id, :text_len] = text_tokens
             # Last cell contains sequence length
-            self.name_data[ent_id, -1] = name_len
             self.text_data[ent_id, -1] = text_len
 
-    @staticmethod
-    def get_batch_data(data, ent_ids):
-        # Convert ent_ids to tensor of token IDs and sequence length
-        # Shape: (*, L + 1), where L is the maximum length sequence
-        seq_data = data[ent_ids]
-        max_len = seq_data.shape[-1] - 1
+    def get_entity_description(self, ent_ids):
+        """Get entity descriptions for a tensor of entity IDs."""
+        text_data = self.text_data[ent_ids]
+        text_end_idx = text_data.shape[-1] - 1
 
         # Separate tokens from lengths
-        tokens, seq_len = seq_data.split(max_len, dim=-1)
-        max_batch_len = seq_len.max()
+        text_tok, text_len = text_data.split(text_end_idx, dim=-1)
+        max_batch_len = text_len.max()
         # Truncate batch
-        tokens = tokens[..., :max_batch_len]
-        masks = (tokens > 0).float()
+        text_tok = text_tok[..., :max_batch_len]
+        text_mask = (text_tok > 0).float()
 
-        return tokens, masks, seq_len
-
-    def get_entity_name_description(self, ent_ids):
-        """Retrieve a batch of sequences (entity descriptions),
-        for each entity in the input.
-
-        Args:
-            ent_ids: torch.Tensor of type torch.Long, of arbitrary shape (*)
-
-        Returns:
-            tokens: torch.Tensor of type torch.Long, of shape (*, L) where L
-                is the maximum sequence length in the batch.
-            masks: torch.Tensor of type torch.Float, of shap (*, L)
-                containing 0 in positions of tokens with padding,
-                and 1 otherwise.
-        """
-        name_tok, name_mask, name_len = self.get_batch_data(self.name_data,
-                                                            ent_ids)
-        text_tok, text_mask, text_len = self.get_batch_data(self.text_data,
-                                                            ent_ids)
-
-        return name_tok, name_mask, name_len, text_tok, text_mask, text_len
-
-    def get_entity_description(self, ent_ids):
-        text_tok, text_mask, text_len = self.get_batch_data(self.text_data,
-                                                            ent_ids)
         return text_tok, text_mask, text_len
 
     def collate_fn(self, data_list):
@@ -287,10 +242,13 @@ class TextGraphDataset(GraphDataset):
 
 
 class GloVeTokenizer:
-    def __init__(self, vocab_dict_file):
+    def __init__(self, vocab_dict_file, uncased=True):
         self.word2idx = torch.load(vocab_dict_file)
+        self.uncased = uncased
 
     def encode(self, text, max_length, return_tensors):
+        if self.uncased:
+            text = text.lower()
         tokens = nltk.word_tokenize(text)
         encoded = [self.word2idx.get(t, self.word2idx[UNK]) for t in tokens]
         encoded = [encoded[:max_length]]
