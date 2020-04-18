@@ -170,7 +170,7 @@ class TextGraphDataset(GraphDataset):
             other datasets).
         drop_stopwords: bool
     """
-    def __init__(self, triples_file, max_len, neg_samples, tokenizer,
+    def __init__(self, triples_file, neg_samples, max_len, tokenizer,
                  drop_stopwords, write_maps_file=False):
         super().__init__(triples_file, neg_samples, write_maps_file)
 

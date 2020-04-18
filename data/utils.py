@@ -134,24 +134,24 @@ def drop_entities(triples_file, train_size=0.8, valid_size=0.1, test_size=0.1):
     assert len(set(val_graph.nodes()).intersection(test_ents)) == 0
     assert len(set(graph.nodes()).intersection(test_ents)) == 0
 
-    names = ('valid', 'test')
+    names = ('dev', 'test')
 
     dirname = osp.dirname(triples_file)
-    basename = osp.basename(triples_file)
+    prefix = 'ind-'
 
     for entity_set, set_name in zip((val_ents, test_ents), names):
-        with open(osp.join(dirname, f'{set_name}-{basename}'), 'w') as file:
+        with open(osp.join(dirname, f'{prefix}{set_name}.tsv'), 'w') as file:
             for entity in entity_set:
                 triples = dropped_edges[entity]
                 for head, tail, rel in triples:
-                    file.write(f'{head} {rel} {tail}\n')
+                    file.write(f'{head}\t{rel}\t{tail}\n')
 
         with open(osp.join(dirname, f'{set_name}-ents.txt'), 'w') as file:
             file.writelines('\n'.join(entity_set))
 
-    with open(osp.join(dirname, f'train-{basename}'), 'w') as train_file:
+    with open(osp.join(dirname, f'{prefix}train.tsv'), 'w') as train_file:
         for head, tail, rel in graph.edges(data=True):
-            train_file.write(f'{head} {rel["weight"]} {tail}\n')
+            train_file.write(f'{head}\t{rel["weight"]}\t{tail}\n')
 
     print(f'Dropped {len(val_ents):,} entities for validation'
           f' and {len(test_ents):,} for test.')
@@ -200,6 +200,6 @@ if __name__ == '__main__':
     args = parser.parse_args()
 
     if args.command == 'drop_entities':
-        drop_entities(args.in_file)
+        drop_entities(args.file)
     elif args.command == 'load_embs':
-        load_embeddings(args.in_file)
+        load_embeddings(args.file)

@@ -29,6 +29,7 @@ if all([uri, database]):
 @ex.config
 def config():
     dataset = 'FB15k-237'
+    inductive = True
     dim = 128
     model = 'glove-bow'
     rel_model = 'transe'
@@ -185,26 +186,27 @@ def get_model(model, dim, rel_model, loss_fn, num_entities, num_relations,
 
 
 @ex.automain
-def link_prediction(dataset, dim, model, rel_model, loss_fn, encoder_name,
-                    regularizer, max_len, num_negatives, lr, use_scheduler,
-                    batch_size,
-                    eval_batch_size,
+def link_prediction(dataset, inductive, dim, model, rel_model, loss_fn,
+                    encoder_name, regularizer, max_len, num_negatives, lr,
+                    use_scheduler, batch_size, eval_batch_size,
                     max_epochs, num_workers, _run: Run, _log: Logger):
     drop_stopwords = model in {'bert-bow', 'bert-dkrl',
                                'glove-bow', 'glove-dkrl'}
 
+    prefix = 'ind-' if inductive and model != 'transductive' else ''
+    triples_file = f'data/{dataset}/{prefix}train.tsv'
     if model == 'transductive':
-        train_data = GraphDataset(triples_file=f'data/{dataset}/train.tsv',
-                                  neg_samples=num_negatives,
+        train_data = GraphDataset(triples_file, num_negatives,
                                   write_maps_file=True)
     else:
         if model.startswith('bert') or model == 'bed':
             tokenizer = BertTokenizer.from_pretrained(encoder_name)
         else:
             tokenizer = GloVeTokenizer('data/glove/glove.6B.300d-maps.pt')
-        train_data = TextGraphDataset(f'data/{dataset}/train.tsv', max_len,
-                                      num_negatives, tokenizer,
-                                      drop_stopwords, write_maps_file=True)
+
+        train_data = TextGraphDataset(triples_file, num_negatives,
+                                      max_len, tokenizer, drop_stopwords,
+                                      write_maps_file=True)
 
     train_loader = DataLoader(train_data, batch_size, shuffle=True,
                               collate_fn=train_data.collate_fn,
@@ -212,10 +214,10 @@ def link_prediction(dataset, dim, model, rel_model, loss_fn, encoder_name,
 
     train_eval_loader = DataLoader(train_data, eval_batch_size)
 
-    valid_data = GraphDataset(f'data/{dataset}/dev.tsv')
+    valid_data = GraphDataset(f'data/{dataset}/{prefix}dev.tsv')
     valid_loader = DataLoader(valid_data, eval_batch_size)
 
-    test_data = GraphDataset(f'data/{dataset}/test.tsv')
+    test_data = GraphDataset(f'data/{dataset}/{prefix}test.tsv')
     test_loader = DataLoader(test_data, eval_batch_size)
 
     # Build graph with all triples to compute filtered metrics
