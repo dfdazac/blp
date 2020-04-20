@@ -177,37 +177,50 @@ class TextGraphDataset(GraphDataset):
         maps = torch.load(self.maps_path)
         ent_ids = maps['ent_ids']
 
-        # Read descriptions, and build a map from entity ID to text
-        text_file = osp.join(self.directory, 'entity2textlong.txt')
-        if not osp.exists(text_file):
-            text_file = osp.join(self.directory, 'entity2text.txt')
-        text_lines = open(text_file)
         if max_len is None:
             max_len = tokenizer.max_len
 
         self.text_data = torch.zeros((len(ent_ids), max_len + 1),
                                      dtype=torch.long)
-
-        for line in text_lines:
-            entity, text = line.strip().split('\t')
-            if entity not in ent_ids:
+        read_entities = set()
+        for text_file in ('entity2textlong.txt', 'entity2text.txt'):
+            file_path = osp.join(self.directory, text_file)
+            if not osp.exists(file_path):
                 continue
-            ent_id = ent_ids[entity]
 
-            if drop_stopwords:
-                tokens = nltk.word_tokenize(text)
-                text = ' '.join([t for t in tokens if t.lower() not in DROPPED])
+            with open(file_path) as f:
+                for line in f:
+                    entity, text = line.strip().split('\t')
+                    if entity not in ent_ids:
+                        continue
+                    if entity in read_entities:
+                        continue
 
-            text_tokens = tokenizer.encode(text,
-                                           max_length=max_len,
-                                           return_tensors='pt')
+                    read_entities.add(entity)
+                    ent_id = ent_ids[entity]
 
-            text_len = text_tokens.shape[1]
+                    if drop_stopwords:
+                        tokens = nltk.word_tokenize(text)
+                        text = ' '.join([t for t in tokens if t.lower() not in DROPPED])
 
-            # Starting slice of row contains token IDs
-            self.text_data[ent_id, :text_len] = text_tokens
-            # Last cell contains sequence length
-            self.text_data[ent_id, -1] = text_len
+                    text_tokens = tokenizer.encode(text,
+                                                   max_length=max_len,
+                                                   return_tensors='pt')
+
+                    text_len = text_tokens.shape[1]
+
+                    # Starting slice of row contains token IDs
+                    self.text_data[ent_id, :text_len] = text_tokens
+                    # Last cell contains sequence length
+                    self.text_data[ent_id, -1] = text_len
+
+        if len(read_entities) != len(ent_ids):
+            raise ValueError(f'Read {len(read_entities):,} descriptions,'
+                             f' but {len(ent_ids):,} were expected.')
+
+        if self.text_data[:, -1].min().item() < 1:
+            raise ValueError(f'Some entries in text_data contain'
+                             f' length-0 descriptions.')
 
     def get_entity_description(self, ent_ids):
         """Get entity descriptions for a tensor of entity IDs."""
