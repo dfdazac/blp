@@ -66,7 +66,8 @@ def get_safely_removed_edges(graph, node, rel_counts, min_edges_left=100):
     return removed_edges, removed_rel_counts
 
 
-def drop_entities(triples_file, train_size=0.8, valid_size=0.1, test_size=0.1):
+def drop_entities(triples_file, train_size=0.8, valid_size=0.1, test_size=0.1,
+                  seed=0):
     """Drop entities from a graph, to create training, validation and test
     splits.
     Entities are dropped so that no disconnected nodes are left in the training
@@ -76,7 +77,7 @@ def drop_entities(triples_file, train_size=0.8, valid_size=0.1, test_size=0.1):
     if abs(train_size + valid_size + test_size - 1.0) > 1e-9:
         raise ValueError('Split sizes must add to 1.')
 
-    random.seed(0)
+    random.seed(seed)
 
     graph = nx.MultiDiGraph()
     triples, rel_counts = parse_triples(triples_file)
@@ -197,9 +198,10 @@ if __name__ == '__main__':
     parser = ArgumentParser()
     parser.add_argument('command', choices=['drop_entities', 'load_embs'])
     parser.add_argument('--file', help='Input file')
+    parser.add_argument('--seed', help='Random seed', default=0)
     args = parser.parse_args()
 
     if args.command == 'drop_entities':
-        drop_entities(args.file)
+        drop_entities(args.file, seed=args.seed)
     elif args.command == 'load_embs':
         load_embeddings(args.file)
