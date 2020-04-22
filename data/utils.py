@@ -76,7 +76,7 @@ def get_safely_removed_edges(graph, node, rel_counts, min_edges_left=100):
     return removed_edges, removed_rel_counts
 
 
-def drop_entities(triples_file, train_size=0.8, valid_size=0.1, test_size=0.1,
+def drop_entities(triples_file, train_size=0.4, valid_size=0.1, test_size=0.1,
                   seed=0, types_file=None):
     """Drop entities from a graph, to create training, validation and test
     splits.
@@ -84,8 +84,10 @@ def drop_entities(triples_file, train_size=0.8, valid_size=0.1, test_size=0.1,
     graph. Dropped entities are distributed between disjoint validation
     and test sets.
     """
-    if abs(train_size + valid_size + test_size - 1.0) > 1e-9:
-        raise ValueError('Split sizes must add to 1.')
+    splits_sum = train_size + valid_size + test_size
+    if splits_sum < 0 or splits_sum > 1:
+        raise ValueError('Sum of split sizes must be between greater than 0'
+                         ' and less than or equal to 1.')
 
     use_types = types_file is not None
     if use_types:
@@ -98,13 +100,16 @@ def drop_entities(triples_file, train_size=0.8, valid_size=0.1, test_size=0.1,
     triples, rel_counts = parse_triples(triples_file)
     graph.add_weighted_edges_from(triples)
     original_num_edges = graph.number_of_edges()
+    original_num_nodes = graph.number_of_nodes()
 
     print(f'Loaded graph with {graph.number_of_nodes():,} entities '
           f'and {graph.number_of_edges():,} edges')
 
     dropped_entities = []
     dropped_edges = dict()
-    num_to_drop = int(graph.number_of_nodes() * (valid_size + test_size))
+    num_to_drop = int(original_num_nodes * (1 - train_size))
+    num_val = int(original_num_nodes * valid_size)
+    num_test = int(original_num_nodes * test_size)
 
     print(f'Removing {num_to_drop:,} entities...')
     progress = tqdm(total=num_to_drop, file=sys.stdout)
@@ -142,13 +147,11 @@ def drop_entities(triples_file, train_size=0.8, valid_size=0.1, test_size=0.1,
     num_removed_edges = sum(map(len, dropped_edges.values()))
     assert num_removed_edges + graph.number_of_edges() == original_num_edges
 
-    split_ratio = test_size/(valid_size + test_size)
-    split_idx = int(len(dropped_entities) * split_ratio)
     # Test entities MUST come from first slice! This guarantees that
     # validation entities don't have edges with them (because nodes were
     # removed in sequence)
-    test_ents = set(dropped_entities[:split_idx])
-    val_ents = set(dropped_entities[split_idx:])
+    test_ents = set(dropped_entities[:num_test])
+    val_ents = set(dropped_entities[num_test:num_test + num_val])
 
     # Check that val and test entity sets are disjoint
     assert len(val_ents.intersection(test_ents)) == 0
@@ -183,6 +186,7 @@ def drop_entities(triples_file, train_size=0.8, valid_size=0.1, test_size=0.1,
 
     print(f'Dropped {len(val_ents):,} entities for validation'
           f' and {len(test_ents):,} for test.')
+    print(f'{graph.number_of_nodes():,} entities are left for training.')
     print(f'Saved output files to {dirname}/')
 
 
