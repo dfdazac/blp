@@ -231,10 +231,13 @@ if __name__ == '__main__':
     parser.add_argument('--file', help='Input file')
     parser.add_argument('--types_file', help='Tab-separated file of entities'
                                              ' and their type', default=None)
+    parser.add_argument('--train_size', help='Fraction of entities used for'
+                        ' training.', default=0.8, type=float)
     parser.add_argument('--seed', help='Random seed', default=0)
     args = parser.parse_args()
 
     if args.command == 'drop_entities':
-        drop_entities(args.file, seed=args.seed, types_file=args.types_file)
+        drop_entities(args.file, train_size=args.train_size, seed=args.seed,
+                      types_file=args.types_file)
     elif args.command == 'load_embs':
         load_embeddings(args.file)
