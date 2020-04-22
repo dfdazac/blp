@@ -4,7 +4,7 @@ from argparse import ArgumentParser
 import networkx as nx
 import random
 import os.path as osp
-from collections import Counter
+from collections import Counter, defaultdict
 import torch
 
 
@@ -20,6 +20,16 @@ def parse_triples(triples_file):
         rel_counts[rel] += 1
 
     return triples, rel_counts
+
+
+def read_entity_types(entity2type_file):
+    type2entities = defaultdict(set)
+    with open(entity2type_file) as f:
+        for line in f:
+            entity, label = line.strip().split()
+            type2entities[label].add(entity)
+
+    return dict(type2entities)
 
 
 def get_safely_removed_edges(graph, node, rel_counts, min_edges_left=100):
@@ -67,7 +77,7 @@ def get_safely_removed_edges(graph, node, rel_counts, min_edges_left=100):
 
 
 def drop_entities(triples_file, train_size=0.8, valid_size=0.1, test_size=0.1,
-                  seed=0):
+                  seed=0, types_file=None):
     """Drop entities from a graph, to create training, validation and test
     splits.
     Entities are dropped so that no disconnected nodes are left in the training
@@ -76,6 +86,11 @@ def drop_entities(triples_file, train_size=0.8, valid_size=0.1, test_size=0.1,
     """
     if abs(train_size + valid_size + test_size - 1.0) > 1e-9:
         raise ValueError('Split sizes must add to 1.')
+
+    use_types = types_file is not None
+    if use_types:
+        type2entities = read_entity_types(types_file)
+        types = list(type2entities.keys())
 
     random.seed(seed)
 
@@ -94,8 +109,16 @@ def drop_entities(triples_file, train_size=0.8, valid_size=0.1, test_size=0.1,
     print(f'Removing {num_to_drop:,} entities...')
     progress = tqdm(total=num_to_drop, file=sys.stdout)
     while len(dropped_entities) < num_to_drop:
-        # Select a random entity and attempt to remove it
-        rand_ent = random.choice(list(graph.nodes))
+        if use_types:
+            # Sample an entity with probability proportional to its type count
+            # (minus 1 to keep at least one entity of any type)
+            weights = [len(type2entities[t]) - 1 for t in types]
+            rand_type = random.choices(types, weights, k=1)[0]
+            rand_ent = random.choice(list(type2entities[rand_type]))
+        else:
+            # Sample an entity uniformly at random
+            rand_ent = random.choice(list(graph.nodes))
+
         removed_tuple = get_safely_removed_edges(graph, rand_ent, rel_counts)
 
         if removed_tuple is not None:
@@ -104,6 +127,10 @@ def drop_entities(triples_file, train_size=0.8, valid_size=0.1, test_size=0.1,
             graph.remove_node(rand_ent)
             dropped_entities.append(rand_ent)
             rel_counts.subtract(removed_counts)
+
+            if use_types:
+                type2entities[rand_type].remove(rand_ent)
+
             progress.update(1)
 
     progress.close()
@@ -198,10 +225,12 @@ if __name__ == '__main__':
     parser = ArgumentParser()
     parser.add_argument('command', choices=['drop_entities', 'load_embs'])
     parser.add_argument('--file', help='Input file')
+    parser.add_argument('--types_file', help='Tab-separated file of entities'
+                                             ' and their type', default=None)
     parser.add_argument('--seed', help='Random seed', default=0)
     args = parser.parse_args()
 
     if args.command == 'drop_entities':
-        drop_entities(args.file, seed=args.seed)
+        drop_entities(args.file, seed=args.seed, types_file=args.types_file)
     elif args.command == 'load_embs':
         load_embeddings(args.file)
