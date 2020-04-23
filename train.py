@@ -62,7 +62,11 @@ def eval_link_prediction(model, triples_loader, text_dataset, entities,
 
     if isinstance(model, models.InductiveLinkPrediction):
         num_entities = entities.shape[0]
-        ent2idx = utils.make_ent2idx(entities)
+        if compute_filtered:
+            max_ent_id = filtering_graph.number_of_nodes() - 1
+        else:
+            max_ent_id = entities.max()
+        ent2idx = utils.make_ent2idx(entities, max_ent_id)
     else:
         # In the transductive setting we have access to all entities
         num_entities = model.ent_emb.num_embeddings
@@ -230,6 +234,8 @@ def link_prediction(dataset, inductive, dim, model, rel_model, loss_fn,
     train_ent = set(train_data.entities.tolist())
     train_val_ent = set(valid_data.entities.tolist()).union(train_ent)
     train_val_test_ent = set(test_data.entities.tolist()).union(train_val_ent)
+
+    _run.log_scalar('num_train_entities', len(train_ent))
 
     train_ent = torch.tensor(list(train_ent))
     train_val_ent = torch.tensor(list(train_val_ent))
