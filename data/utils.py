@@ -76,7 +76,7 @@ def get_safely_removed_edges(graph, node, rel_counts, min_edges_left=100):
     return removed_edges, removed_rel_counts
 
 
-def drop_entities(triples_file, train_size=0.4, valid_size=0.1, test_size=0.1,
+def drop_entities(triples_file, train_size=0.8, valid_size=0.1, test_size=0.1,
                   seed=0, types_file=None):
     """Drop entities from a graph, to create training, validation and test
     splits.

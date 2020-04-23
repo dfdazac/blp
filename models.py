@@ -161,18 +161,30 @@ class DKRL(WordEmbeddingsLP):
                          dim, encoder_name, embeddings)
 
         emb_dim = self.embeddings.embedding_dim
-        self.cnn = nn.Sequential(nn.Conv1d(emb_dim, self.dim, kernel_size=2),
-                                 nn.MaxPool1d(kernel_size=4),
-                                 nn.Tanh(),
-                                 nn.Conv1d(self.dim, self.dim, kernel_size=2),
-                                 nn.AdaptiveAvgPool1d(1),
-                                 nn.Tanh())
+        self.conv1 = nn.Conv1d(emb_dim, self.dim, kernel_size=2)
+        self.conv2 = nn.Conv1d(self.dim, self.dim, kernel_size=2)
 
     def _encode_entity(self, text_tok, text_mask):
         # Extract word embeddings and mask padding
         embs = self.embeddings(text_tok) * text_mask.unsqueeze(dim=-1)
+
+        # Reshape to (N, C, L)
         embs = embs.transpose(1, 2)
-        embs = self.cnn(embs).squeeze()
+        text_mask = text_mask.unsqueeze(1)
+
+        # Pass through CNN, adding padding for valid convolutions
+        # and masking outputs due to padding
+        embs = F.pad(embs, [0, 1])
+        embs = self.conv1(embs)
+        embs = embs * text_mask
+        embs = F.max_pool1d(embs, kernel_size=4)
+        text_mask = F.max_pool1d(text_mask, kernel_size=4)
+        embs = F.tanh(embs)
+        embs = F.pad(embs, [0, 1])
+        embs = self.conv2(embs)
+        lengths = torch.sum(text_mask, dim=-1)
+        embs = torch.sum(embs * text_mask, dim=-1) / lengths
+        embs = torch.tanh(embs)
 
         return embs
 
