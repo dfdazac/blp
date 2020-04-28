@@ -63,12 +63,12 @@ def eval_link_prediction(model, triples_loader, text_dataset, entities,
     if isinstance(model, models.InductiveLinkPrediction):
         num_entities = entities.shape[0]
         if compute_filtered:
-            max_ent_id = filtering_graph.number_of_nodes() - 1
+            max_ent_id = max(filtering_graph.nodes)
         else:
             max_ent_id = entities.max()
         ent2idx = utils.make_ent2idx(entities, max_ent_id)
     else:
-        # In the transductive setting we have access to all entities
+        # Transductive models have a lookup table of embeddings
         num_entities = model.ent_emb.num_embeddings
         ent2idx = torch.arange(num_entities)
         entities = ent2idx
