@@ -179,7 +179,7 @@ class DKRL(WordEmbeddingsLP):
         embs = embs * text_mask
         embs = F.max_pool1d(embs, kernel_size=4)
         text_mask = F.max_pool1d(text_mask, kernel_size=4)
-        embs = F.tanh(embs)
+        embs = torch.tanh(embs)
         embs = F.pad(embs, [0, 1])
         embs = self.conv2(embs)
         lengths = torch.sum(text_mask, dim=-1)
