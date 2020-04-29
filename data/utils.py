@@ -6,6 +6,7 @@ import random
 import os.path as osp
 from collections import Counter, defaultdict
 import torch
+from pprint import pprint
 
 
 def parse_triples(triples_file):
@@ -225,9 +226,77 @@ def load_embeddings(embs_file):
     torch.save(word2idx, f'{filename}-maps.pt')
 
 
+def categorize_relations(triples_file):
+    """Given a set of triples, assign a category to a relation from the
+    following:
+        1 to 1
+        1 to many
+        many to 1
+        many to many
+    Results are saved back to disk.
+
+    Args:
+        triples_file: str, file containing triples of the form
+            head relation tail
+    """
+    graph = nx.MultiDiGraph()
+    triples, rel_counts = parse_triples(triples_file)
+    graph.add_weighted_edges_from(triples)
+
+    rel2heads_count = defaultdict(list)
+    rel2tails_count = defaultdict(list)
+
+    for entity in graph.nodes:
+        rel2heads_entity_count = Counter()
+        # Fix entity as tail, and check all heads
+        in_edges = graph.in_edges(entity, data=True)
+        for u, v, edge in in_edges:
+            rel2heads_entity_count[edge['weight']] += 1
+
+        for rel, counts in rel2heads_entity_count.items():
+            rel2heads_count[rel].append(counts)
+
+        rel2tails_entity_count = Counter()
+        # Fix entity as head, and check all tails
+        out_edges = graph.out_edges(entity, data=True)
+        for u, v, edge in out_edges:
+            rel2tails_entity_count[edge['weight']] += 1
+
+        for rel, counts in rel2tails_entity_count.items():
+            rel2tails_count[rel].append(counts)
+
+    rel2category = dict()
+    for rel in rel2heads_count:
+        head_counts = rel2heads_count[rel]
+        tail_counts = rel2tails_count[rel]
+
+        head_avg = sum(head_counts)/len(head_counts)
+        tail_avg = sum(tail_counts)/len(tail_counts)
+
+        head_category = '1' if head_avg < 1.5 else 'many'
+        tail_category = '1' if tail_avg < 1.5 else 'many'
+
+        rel2category[rel] = f'{head_category}-to-{tail_category}'
+
+    print('Relation category statistics:')
+    cat_counts = Counter(rel2category.values())
+    for category, count in cat_counts.items():
+        proportion = 100 * count/len(rel2category)
+        print(f'{category:13} {count:3}  {proportion:4.1f}%')
+
+    dirname = osp.dirname(triples_file)
+    output_path = osp.join(dirname, 'relations-cat.txt')
+    with open(output_path, 'w') as f:
+        for relation, category in rel2category.items():
+            f.write(f'{relation}\t{category}\n')
+
+    print(f'Saved relation categories to {output_path}')
+
+
 if __name__ == '__main__':
     parser = ArgumentParser()
-    parser.add_argument('command', choices=['drop_entities', 'load_embs'])
+    parser.add_argument('command', choices=['drop_entities', 'load_embs',
+                                            'categorize'])
     parser.add_argument('--file', help='Input file')
     parser.add_argument('--types_file', help='Tab-separated file of entities'
                                              ' and their type', default=None)
@@ -241,3 +310,5 @@ if __name__ == '__main__':
                       types_file=args.types_file)
     elif args.command == 'load_embs':
         load_embeddings(args.file)
+    elif args.command == 'categorize':
+        categorize_relations(args.file)
