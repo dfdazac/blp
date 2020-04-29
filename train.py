@@ -31,7 +31,7 @@ def config():
     dataset = 'FB15k-237'
     inductive = True
     dim = 128
-    model = 'glove-bow'
+    model = 'bed'
     rel_model = 'transe'
     loss_fn = 'margin'
     encoder_name = 'bert-base-cased'
@@ -41,9 +41,10 @@ def config():
     lr = 1e-3
     use_scheduler = False
     batch_size = 64
-    eval_batch_size = 128
-    max_epochs = 40
+    eval_batch_size = 64
+    max_epochs = 0
     num_workers = 4
+    checkpoint = 'bed-70.pt'
 
 
 @ex.capture
@@ -51,8 +52,10 @@ def config():
 def eval_link_prediction(model, triples_loader, text_dataset, entities,
                          epoch, _run: Run, _log: Logger,
                          prefix='', max_num_batches=None,
-                         filtering_graph=None):
+                         filtering_graph=None, new_entities=None):
     compute_filtered = filtering_graph is not None
+    mrr_by_position = torch.zeros(3, dtype=torch.float).to(device)
+    mrr_pos_counts = torch.zeros_like(mrr_by_position)
 
     hit_positions = [1, 3, 10]
     hits_at_k = {pos: 0.0 for pos in hit_positions}
@@ -123,7 +126,7 @@ def eval_link_prediction(model, triples_loader, text_dataset, entities,
         hits = utils.hit_at_k(pred_ents, true_ents, hit_positions)
         for j, h in enumerate(hits):
             hits_at_k[hit_positions[j]] += h
-        mrr += utils.mrr(pred_ents, true_ents)
+        mrr += utils.mrr(pred_ents, true_ents).mean().item()
 
         if compute_filtered:
             filters = utils.get_triple_filters(triples, filtering_graph,
@@ -135,7 +138,16 @@ def eval_link_prediction(model, triples_loader, text_dataset, entities,
             hits_filt = utils.hit_at_k(pred_ents, true_ents, hit_positions)
             for j, h in enumerate(hits_filt):
                 hits_at_k_filt[hit_positions[j]] += h
-            mrr_filt += utils.mrr(pred_ents, true_ents)
+            mrr_filt_per_triple = utils.mrr(pred_ents, true_ents)
+            mrr_filt += mrr_filt_per_triple.mean().item()
+
+            if new_entities is not None:
+                by_position = utils.split_by_new_position(triples,
+                                                          mrr_filt_per_triple,
+                                                          new_entities)
+                batch_mrr_by_position, batch_mrr_pos_counts = by_position
+                mrr_by_position += batch_mrr_by_position
+                mrr_pos_counts += batch_mrr_pos_counts
 
         batch_count += 1
 
@@ -160,6 +172,16 @@ def eval_link_prediction(model, triples_loader, text_dataset, entities,
             _run.log_scalar(f'{prefix}_hits@{k}_filt', value, epoch)
 
     _log.info(log_str)
+
+    if new_entities is not None and compute_filtered:
+        mrr_pos_counts[mrr_pos_counts < 1.0] = 1.0
+        mrr_by_position = mrr_by_position / mrr_pos_counts
+        for i, t in enumerate((f'{prefix}_mrr_filt_both_new',
+                               f'{prefix}_mrr_filt_head_new',
+                               f'{prefix}_mrr_filt_tail_new')):
+            value = mrr_by_position[i].item()
+            _log.info(f'{t}: {value:.4f}')
+            _run.log_scalar(t, value, epoch)
 
     return ent_emb, mrr
 
@@ -193,7 +215,8 @@ def get_model(model, dim, rel_model, loss_fn, num_entities, num_relations,
 def link_prediction(dataset, inductive, dim, model, rel_model, loss_fn,
                     encoder_name, regularizer, max_len, num_negatives, lr,
                     use_scheduler, batch_size, eval_batch_size,
-                    max_epochs, num_workers, _run: Run, _log: Logger):
+                    max_epochs, num_workers, checkpoint,
+                    _run: Run, _log: Logger):
     drop_stopwords = model in {'bert-bow', 'bert-dkrl',
                                'glove-bow', 'glove-dkrl'}
 
@@ -235,6 +258,9 @@ def link_prediction(dataset, inductive, dim, model, rel_model, loss_fn,
     train_val_ent = set(valid_data.entities.tolist()).union(train_ent)
     train_val_test_ent = set(test_data.entities.tolist()).union(train_val_ent)
 
+    val_new_ents = train_val_ent.difference(train_ent)
+    test_new_ents = train_val_test_ent.difference(train_val_ent)
+
     _run.log_scalar('num_train_entities', len(train_ent))
 
     train_ent = torch.tensor(list(train_ent))
@@ -244,6 +270,9 @@ def link_prediction(dataset, inductive, dim, model, rel_model, loss_fn,
     model = get_model(model, dim, rel_model, loss_fn, len(train_val_test_ent),
                       train_data.num_rels, encoder_name, regularizer)
     model = model.to(device)
+
+    if checkpoint is not None:
+        model.load_state_dict(torch.load(checkpoint, map_location=device))
 
     optimizer = Adam(model.parameters(), lr=lr)
     total_steps = len(train_loader) * max_epochs
@@ -289,15 +318,19 @@ def link_prediction(dataset, inductive, dim, model, rel_model, loss_fn,
             torch.save(model.state_dict(), checkpoint_file)
 
     # Evaluate with best performing checkpoint
-    model.load_state_dict(torch.load(checkpoint_file))
+    if max_epochs > 0:
+        model.load_state_dict(torch.load(checkpoint_file))
+
     _log.info('Evaluating on validation set (with filtering)...')
     eval_link_prediction(model, valid_loader, train_data, train_val_ent,
-                         max_epochs + 1, prefix='valid', filtering_graph=graph)
+                         max_epochs + 1, prefix='valid', filtering_graph=graph,
+                         new_entities=val_new_ents)
 
     _log.info('Evaluating on test set...')
     ent_emb = eval_link_prediction(model, test_loader, train_data,
                                    train_val_test_ent, max_epochs + 1,
-                                   prefix='test', filtering_graph=graph)
+                                   prefix='test', filtering_graph=graph,
+                                   new_entities=test_new_ents)
 
     # Save final entity embeddings obtained with trained encoder
     torch.save(ent_emb, osp.join(OUT_PATH, f'ent_emb-{_run._id}.pt'))

@@ -95,7 +95,44 @@ def mrr(predictions, ground_truth_idx):
     """
     indices = predictions.argsort(descending=True)
     rankings = (indices == ground_truth_idx).nonzero()[:, 1].float() + 1.0
-    return torch.mean(rankings.reciprocal()).item()
+    return rankings.reciprocal()
+
+
+def split_by_new_position(triples, mrr_values, new_entities):
+    """Split MRR results by the position of new entity. Use to break down
+    results for a triple where a new entity is at the head and the tail,
+    at the head only, or the tail only.
+    Since MRR is calculated by corrupting the head first, and then the head,
+    the size of mrr_values should be twice the size of triples. The calculated
+    MRR is then the average of the two cases.
+    Args:
+        triples: Bx3 tensor containing (head, tail, rel).
+        mrr_values: 2B tensor, with first half containing MRR for corrupted
+            triples at the head position, and second half at the tail position.
+        new_entities: set, entities to be considered as new.
+    Returns:
+        mrr_by_position: tensor of 3 elements breaking down MRR by new entities
+            at both positions, at head, and tail.
+        mrr_pos_counts: tensor of 3 elements containing counts for each case.
+    """
+    mrr_by_position = torch.zeros(3, device=mrr_values.device)
+    mrr_pos_counts = torch.zeros_like(mrr_by_position)
+    num_triples = triples.shape[0]
+
+    for i, (h, t, r) in enumerate(triples):
+        head, tail = h.item(), t.item()
+        mrr_val = (mrr_values[i] + mrr_values[i + num_triples]).item() / 2.0
+        if head in new_entities and tail in new_entities:
+            mrr_by_position[0] += mrr_val
+            mrr_pos_counts[0] += 1.0
+        elif head in new_entities:
+            mrr_by_position[1] += mrr_val
+            mrr_pos_counts[1] += 1.0
+        elif tail in new_entities:
+            mrr_by_position[2] += mrr_val
+            mrr_pos_counts[2] += 1.0
+
+    return mrr_by_position, mrr_pos_counts
 
 
 def get_logger():
