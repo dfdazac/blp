@@ -12,6 +12,7 @@ nltk.download('stopwords')
 nltk.download('punkt')
 STOP_WORDS = stopwords.words('english')
 DROPPED = STOP_WORDS + list(string.punctuation)
+CATEGORY_IDS = {'1-to-1': 0, '1-to-many': 1, 'many-to-1': 2, 'many-to-many': 3}
 
 
 def file_to_ids(file_path):
@@ -124,6 +125,16 @@ class GraphDataset(Dataset):
 
         self.triples = torch.tensor(triples, dtype=torch.long)
 
+        self.rel_categories = torch.zeros(len(rel_ids), dtype=torch.long)
+        rel_categories_file = osp.join(directory, 'relations-cat.txt')
+        self.has_rel_categories = False
+        if osp.exists(rel_categories_file):
+            with open(rel_categories_file) as f:
+                for line in f:
+                    rel, cat = line.strip().split()
+                    self.rel_categories[rel_ids[rel]] = CATEGORY_IDS[cat]
+            self.has_rel_categories = True
+
         # Save maps for reuse
         torch.save({'ent_ids': ent_ids, 'rel_ids': rel_ids}, maps_path)
 
@@ -190,7 +201,9 @@ class TextGraphDataset(GraphDataset):
 
             with open(file_path) as f:
                 for line in f:
-                    entity, text = line.strip().split('\t')
+                    values = line.strip().split('\t')
+                    entity = values[0]
+                    text = ' '.join(values[1:])
                     if entity not in ent_ids:
                         continue
                     if entity in read_entities:

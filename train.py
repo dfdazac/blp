@@ -10,6 +10,7 @@ from sacred import Experiment
 from sacred.observers import MongoObserver
 from transformers import BertTokenizer, get_linear_schedule_with_warmup
 
+from data import CATEGORY_IDS
 from data import GraphDataset, TextGraphDataset, GloVeTokenizer
 import models
 import utils
@@ -28,10 +29,10 @@ if all([uri, database]):
 
 @ex.config
 def config():
-    dataset = 'FB15k-237'
+    dataset = 'Wikidata5M'
     inductive = True
     dim = 128
-    model = 'bed'
+    model = 'bert-dkrl'
     rel_model = 'transe'
     loss_fn = 'margin'
     encoder_name = 'bert-base-cased'
@@ -42,9 +43,9 @@ def config():
     use_scheduler = False
     batch_size = 64
     eval_batch_size = 64
-    max_epochs = 0
+    max_epochs = 10
     num_workers = 4
-    checkpoint = 'bed-70.pt'
+    checkpoint = None
 
 
 @ex.capture
@@ -56,6 +57,10 @@ def eval_link_prediction(model, triples_loader, text_dataset, entities,
     compute_filtered = filtering_graph is not None
     mrr_by_position = torch.zeros(3, dtype=torch.float).to(device)
     mrr_pos_counts = torch.zeros_like(mrr_by_position)
+
+    rel_categories = triples_loader.dataset.rel_categories.to(device)
+    mrr_by_category = torch.zeros([2, 4], dtype=torch.float).to(device)
+    mrr_cat_count = torch.zeros([1, 4], dtype=torch.float).to(device)
 
     hit_positions = [1, 3, 10]
     hits_at_k = {pos: 0.0 for pos in hit_positions}
@@ -149,6 +154,14 @@ def eval_link_prediction(model, triples_loader, text_dataset, entities,
                 mrr_by_position += batch_mrr_by_position
                 mrr_pos_counts += batch_mrr_pos_counts
 
+            if triples_loader.dataset.has_rel_categories:
+                by_category = utils.split_by_category(triples,
+                                                      mrr_filt_per_triple,
+                                                      rel_categories)
+                batch_mrr_by_cat, batch_mrr_cat_count = by_category
+                mrr_by_category += batch_mrr_by_cat
+                mrr_cat_count += batch_mrr_cat_count
+
         batch_count += 1
 
     for hits_dict in (hits_at_k, hits_at_k_filt):
@@ -176,12 +189,24 @@ def eval_link_prediction(model, triples_loader, text_dataset, entities,
     if new_entities is not None and compute_filtered:
         mrr_pos_counts[mrr_pos_counts < 1.0] = 1.0
         mrr_by_position = mrr_by_position / mrr_pos_counts
+        log_str = ''
         for i, t in enumerate((f'{prefix}_mrr_filt_both_new',
                                f'{prefix}_mrr_filt_head_new',
                                f'{prefix}_mrr_filt_tail_new')):
             value = mrr_by_position[i].item()
-            _log.info(f'{t}: {value:.4f}')
+            log_str += f'{t}: {value:.4f}  '
             _run.log_scalar(t, value, epoch)
+        _log.info(log_str)
+
+    if compute_filtered and triples_loader.dataset.has_rel_categories:
+        mrr_cat_count[mrr_cat_count < 1.0] = 1.0
+        mrr_by_category = mrr_by_category / mrr_cat_count
+
+        for i, case in enumerate(['pred_head', 'pred_tail']):
+            log_str = f'{case} '
+            for cat, cat_id in CATEGORY_IDS.items():
+                log_str += f'{cat}_mrr: {mrr_by_category[i, cat_id]:.4f}  '
+            _log.info(log_str)
 
     return ent_emb, mrr
 
@@ -327,10 +352,10 @@ def link_prediction(dataset, inductive, dim, model, rel_model, loss_fn,
                          new_entities=val_new_ents)
 
     _log.info('Evaluating on test set...')
-    ent_emb = eval_link_prediction(model, test_loader, train_data,
-                                   train_val_test_ent, max_epochs + 1,
-                                   prefix='test', filtering_graph=graph,
-                                   new_entities=test_new_ents)
+    ent_emb, _ = eval_link_prediction(model, test_loader, train_data,
+                                      train_val_test_ent, max_epochs + 1,
+                                      prefix='test', filtering_graph=graph,
+                                      new_entities=test_new_ents)
 
     # Save final entity embeddings obtained with trained encoder
     torch.save(ent_emb, osp.join(OUT_PATH, f'ent_emb-{_run._id}.pt'))

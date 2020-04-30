@@ -135,6 +135,26 @@ def split_by_new_position(triples, mrr_values, new_entities):
     return mrr_by_position, mrr_pos_counts
 
 
+def split_by_category(triples, mrr_values, rel_categories):
+    mrr_by_category = torch.zeros([2, 4], device=mrr_values.device)
+    mrr_cat_count = torch.zeros([1, 4], dtype=torch.float,
+                                device=mrr_by_category.device)
+    num_triples = triples.shape[0]
+
+    for i, (h, t, r) in enumerate(triples):
+        rel_category = rel_categories[r]
+
+        mrr_val_head_pred = mrr_values[i]
+        mrr_by_category[0, rel_category] += mrr_val_head_pred
+
+        mrr_val_tail_pred = mrr_values[i + num_triples]
+        mrr_by_category[1, rel_category] += mrr_val_tail_pred
+
+        mrr_cat_count[0, rel_category] += 1
+
+    return mrr_by_category, mrr_cat_count
+
+
 def get_logger():
     """Get a default logger that includes a timestamp."""
     logger = logging.getLogger("")
