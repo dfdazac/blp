@@ -9,6 +9,10 @@ from logging import Logger
 from sacred import Experiment
 from sacred.observers import MongoObserver
 from transformers import BertTokenizer, get_linear_schedule_with_warmup
+from collections import defaultdict
+import numpy as np
+from sklearn.linear_model import LogisticRegression
+from sklearn.metrics import accuracy_score
 
 from data import CATEGORY_IDS
 from data import GraphDataset, TextGraphDataset, GloVeTokenizer
@@ -29,10 +33,10 @@ if all([uri, database]):
 
 @ex.config
 def config():
-    dataset = 'Wikidata5M'
+    dataset = 'FB15k-237'
     inductive = True
     dim = 128
-    model = 'bert-dkrl'
+    model = 'bert-bow'
     rel_model = 'transe'
     loss_fn = 'margin'
     encoder_name = 'bert-base-cased'
@@ -42,10 +46,11 @@ def config():
     lr = 1e-3
     use_scheduler = False
     batch_size = 64
-    eval_batch_size = 64
-    max_epochs = 10
+    eval_batch_size = 16
+    max_epochs = 0
     num_workers = 4
     checkpoint = None
+    use_cached_text = True
 
 
 @ex.capture
@@ -236,11 +241,11 @@ def get_model(model, dim, rel_model, loss_fn, num_entities, num_relations,
         raise ValueError(f'Unkown model {model}')
 
 
-@ex.automain
+@ex.command
 def link_prediction(dataset, inductive, dim, model, rel_model, loss_fn,
                     encoder_name, regularizer, max_len, num_negatives, lr,
                     use_scheduler, batch_size, eval_batch_size,
-                    max_epochs, num_workers, checkpoint,
+                    max_epochs, num_workers, checkpoint, use_cached_text,
                     _run: Run, _log: Logger):
     drop_stopwords = model in {'bert-bow', 'bert-dkrl',
                                'glove-bow', 'glove-dkrl'}
@@ -258,7 +263,8 @@ def link_prediction(dataset, inductive, dim, model, rel_model, loss_fn,
 
         train_data = TextGraphDataset(triples_file, num_negatives,
                                       max_len, tokenizer, drop_stopwords,
-                                      write_maps_file=True)
+                                      write_maps_file=True,
+                                      use_cached_text=use_cached_text)
 
     train_loader = DataLoader(train_data, batch_size, shuffle=True,
                               collate_fn=train_data.collate_fn,
@@ -360,3 +366,74 @@ def link_prediction(dataset, inductive, dim, model, rel_model, loss_fn,
     # Save final entity embeddings obtained with trained encoder
     torch.save(ent_emb, osp.join(OUT_PATH, f'ent_emb-{_run._id}.pt'))
     torch.save(train_val_test_ent, osp.join(OUT_PATH, f'ents-{_run._id}.pt'))
+
+
+@ex.command
+def node_classification(dataset, checkpoint, _run: Run, _log: Logger):
+    ent_emb, *_ = torch.load(f'output/ent_emb-{checkpoint}.pt',
+                             map_location='cpu')
+    ent_emb = ent_emb.squeeze().numpy()
+    num_embs, emb_dim = ent_emb.shape
+    _log.info(f'Loaded {num_embs} embeddings with dim={emb_dim}')
+
+    emb_ids = torch.load(f'output/ents-{checkpoint}.pt', map_location='cpu')
+    ent2idx = utils.make_ent2idx(emb_ids, max_ent_id=emb_ids.max()).numpy()
+    maps = torch.load(f'data/{dataset}/maps.pt')
+    ent_ids = maps['ent_ids']
+    class2label = defaultdict(lambda: len(class2label))
+
+    splits = ['train', 'dev', 'test']
+    split_2data = dict()
+    for split in splits:
+        with open(f'data/{dataset}/{split}-ents-class.txt') as f:
+            idx = []
+            labels = []
+            for line in f:
+                entity, ent_class = line.strip().split()
+                entity_id = ent_ids[entity]
+                entity_idx = ent2idx[entity_id]
+                idx.append(entity_idx)
+                labels.append(class2label[ent_class])
+
+            x = ent_emb[idx]
+            y = np.array(labels)
+            split_2data[split] = (x, y)
+
+    x_train, y_train = split_2data['train']
+    x_dev, y_dev = split_2data['dev']
+    x_test, y_test = split_2data['test']
+
+    best_dev_metric = 0.0
+    best_c = 0
+    for k in range(-1, 5):
+        c = 10 ** -k
+        model = LogisticRegression(C=c, multi_class='multinomial',
+                                   max_iter=1000)
+        model.fit(x_train, y_train)
+
+        dev_preds = model.predict(x_dev)
+        dev_acc = accuracy_score(y_dev, dev_preds)
+        _log.info(f'{c:.4f} - {dev_acc:.4f}')
+
+        if dev_acc > best_dev_metric:
+            best_dev_metric = dev_acc
+            best_c = c
+
+    _log.info(f'Best regularization coefficient: {best_c:.4f}')
+    model = LogisticRegression(C=best_c, multi_class='multinomial',
+                               max_iter=1000)
+    x_train_all = np.concatenate((x_train, x_dev))
+    y_train_all = np.concatenate((y_train, y_dev))
+    model.fit(x_train_all, y_train_all)
+
+    train_preds = model.predict(x_train_all)
+    train_acc = accuracy_score(y_train_all, train_preds)
+
+    test_preds = model.predict(x_test)
+    test_acc = accuracy_score(y_test, test_preds)
+
+    _log.info(f'Train accuracy: {train_acc:.4f}')
+    _log.info(f'Test accuracy: {test_acc:.4f}')
+
+
+ex.run_commandline()
