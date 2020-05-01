@@ -1,10 +1,10 @@
-import os
 import os.path as osp
 import torch
 from torch.utils.data import Dataset
 import transformers
 import string
 import nltk
+from tqdm import tqdm
 from nltk.corpus import stopwords
 
 UNK = '[UNK]'
@@ -181,8 +181,9 @@ class TextGraphDataset(GraphDataset):
             other datasets).
         drop_stopwords: bool
     """
+
     def __init__(self, triples_file, neg_samples, max_len, tokenizer,
-                 drop_stopwords, write_maps_file=False):
+                 drop_stopwords, write_maps_file=False, use_cached_text=False):
         super().__init__(triples_file, neg_samples, write_maps_file)
 
         maps = torch.load(self.maps_path)
@@ -191,49 +192,67 @@ class TextGraphDataset(GraphDataset):
         if max_len is None:
             max_len = tokenizer.max_len
 
-        self.text_data = torch.zeros((len(ent_ids), max_len + 1),
-                                     dtype=torch.long)
-        read_entities = set()
-        for text_file in ('entity2textlong.txt', 'entity2text.txt'):
-            file_path = osp.join(self.directory, text_file)
-            if not osp.exists(file_path):
-                continue
+        cached_text_path = osp.join(self.directory, 'text_data.pt')
+        if use_cached_text:
+            if osp.exists(cached_text_path):
+                self.text_data = torch.load(cached_text_path)
+            else:
+                raise LookupError(f'Cached text file not found at'
+                                  f' {cached_text_path}')
+        else:
+            self.text_data = torch.zeros((len(ent_ids), max_len + 1),
+                                         dtype=torch.long)
+            read_entities = set()
+            progress = tqdm(desc='Reading entity descriptions',
+                            total=len(ent_ids), mininterval=5)
+            for text_file in ('entity2textlong.txt', 'entity2text.txt'):
+                file_path = osp.join(self.directory, text_file)
+                if not osp.exists(file_path):
+                    continue
 
-            with open(file_path) as f:
-                for line in f:
-                    values = line.strip().split('\t')
-                    entity = values[0]
-                    text = ' '.join(values[1:])
-                    if entity not in ent_ids:
-                        continue
-                    if entity in read_entities:
-                        continue
+                with open(file_path) as f:
+                    for line in f:
+                        values = line.strip().split('\t')
+                        entity = values[0]
+                        text = ' '.join(values[1:])
+                        if entity not in ent_ids:
+                            continue
+                        if entity in read_entities:
+                            continue
 
-                    read_entities.add(entity)
-                    ent_id = ent_ids[entity]
+                        read_entities.add(entity)
+                        ent_id = ent_ids[entity]
 
-                    if drop_stopwords:
-                        tokens = nltk.word_tokenize(text)
-                        text = ' '.join([t for t in tokens if t.lower() not in DROPPED])
+                        if drop_stopwords:
+                            tokens = nltk.word_tokenize(text)
+                            text = ' '.join([t for t in tokens if
+                                             t.lower() not in DROPPED])
 
-                    text_tokens = tokenizer.encode(text,
-                                                   max_length=max_len,
-                                                   return_tensors='pt')
+                        text_tokens = tokenizer.encode(text,
+                                                       max_length=max_len,
+                                                       return_tensors='pt')
 
-                    text_len = text_tokens.shape[1]
+                        text_len = text_tokens.shape[1]
 
-                    # Starting slice of row contains token IDs
-                    self.text_data[ent_id, :text_len] = text_tokens
-                    # Last cell contains sequence length
-                    self.text_data[ent_id, -1] = text_len
+                        # Starting slice of row contains token IDs
+                        self.text_data[ent_id, :text_len] = text_tokens
+                        # Last cell contains sequence length
+                        self.text_data[ent_id, -1] = text_len
 
-        if len(read_entities) != len(ent_ids):
-            raise ValueError(f'Read {len(read_entities):,} descriptions,'
-                             f' but {len(ent_ids):,} were expected.')
+                        progress.update(1)
 
-        if self.text_data[:, -1].min().item() < 1:
-            raise ValueError(f'Some entries in text_data contain'
-                             f' length-0 descriptions.')
+            progress.close()
+
+            if len(read_entities) != len(ent_ids):
+                raise ValueError(f'Read {len(read_entities):,} descriptions,'
+                                 f' but {len(ent_ids):,} were expected.')
+
+            if self.text_data[:, -1].min().item() < 1:
+                raise ValueError(f'Some entries in text_data contain'
+                                 f' length-0 descriptions.')
+
+            torch.save(self.text_data,
+                       osp.join(self.directory, 'text_data.pt'))
 
     def get_entity_description(self, ent_ids):
         """Get entity descriptions for a tensor of entity IDs."""
