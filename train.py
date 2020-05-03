@@ -20,7 +20,7 @@ import models
 import utils
 
 OUT_PATH = 'output/'
-device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
 
 ex = Experiment()
 ex.logger = utils.get_logger()
@@ -33,24 +33,24 @@ if all([uri, database]):
 
 @ex.config
 def config():
-    dataset = 'FB15k-237'
-    inductive = True
+    dataset = 'umls'
+    inductive = False
     dim = 128
     model = 'bert-bow'
     rel_model = 'transe'
     loss_fn = 'margin'
     encoder_name = 'bert-base-cased'
     regularizer = 1e-2
-    max_len = 32
+    max_len = 64
     num_negatives = 64
     lr = 1e-3
     use_scheduler = False
     batch_size = 64
-    eval_batch_size = 16
-    max_epochs = 0
-    num_workers = 4
+    eval_batch_size = 64
+    max_epochs = 5
+    num_workers = 0
     checkpoint = None
-    use_cached_text = True
+    use_cached_text = False
 
 
 @ex.capture
@@ -59,6 +59,9 @@ def eval_link_prediction(model, triples_loader, text_dataset, entities,
                          epoch, _run: Run, _log: Logger,
                          prefix='', max_num_batches=None,
                          filtering_graph=None, new_entities=None):
+    if device != torch.device('cpu'):
+        model = model.module
+
     compute_filtered = filtering_graph is not None
     mrr_by_position = torch.zeros(3, dtype=torch.float).to(device)
     mrr_pos_counts = torch.zeros_like(mrr_by_position)
@@ -252,9 +255,21 @@ def link_prediction(dataset, inductive, dim, model, rel_model, loss_fn,
 
     prefix = 'ind-' if inductive and model != 'transductive' else ''
     triples_file = f'data/{dataset}/{prefix}train.tsv'
+
+    if device != torch.device('cpu'):
+        num_devices = torch.cuda.device_count()
+        if batch_size % num_devices != 0:
+            raise ValueError(f'Batch size ({batch_size}) must be a multiple of'
+                             f' the number of CUDA devices ({num_devices})')
+        _log.info(f'CUDA devices used: {num_devices}')
+    else:
+        num_devices = 1
+        _log.info('Training on CPU')
+
     if model == 'transductive':
         train_data = GraphDataset(triples_file, num_negatives,
-                                  write_maps_file=True)
+                                  write_maps_file=True,
+                                  num_devices=num_devices)
     else:
         if model.startswith('bert') or model == 'bed':
             tokenizer = BertTokenizer.from_pretrained(encoder_name)
@@ -264,11 +279,12 @@ def link_prediction(dataset, inductive, dim, model, rel_model, loss_fn,
         train_data = TextGraphDataset(triples_file, num_negatives,
                                       max_len, tokenizer, drop_stopwords,
                                       write_maps_file=True,
-                                      use_cached_text=use_cached_text)
+                                      use_cached_text=use_cached_text,
+                                      num_devices=num_devices)
 
     train_loader = DataLoader(train_data, batch_size, shuffle=True,
                               collate_fn=train_data.collate_fn,
-                              num_workers=num_workers, drop_last=True)
+                              num_workers=0, drop_last=True)
 
     train_eval_loader = DataLoader(train_data, eval_batch_size)
 
@@ -300,10 +316,11 @@ def link_prediction(dataset, inductive, dim, model, rel_model, loss_fn,
 
     model = get_model(model, dim, rel_model, loss_fn, len(train_val_test_ent),
                       train_data.num_rels, encoder_name, regularizer)
-    model = model.to(device)
-
     if checkpoint is not None:
-        model.load_state_dict(torch.load(checkpoint, map_location=device))
+        model.load_state_dict(torch.load(checkpoint, map_location='cpu'))
+
+    if device != torch.device('cpu'):
+        model = torch.nn.DataParallel(model).to(device)
 
     optimizer = Adam(model.parameters(), lr=lr)
     total_steps = len(train_loader) * max_epochs
@@ -317,7 +334,7 @@ def link_prediction(dataset, inductive, dim, model, rel_model, loss_fn,
     for epoch in range(1, max_epochs + 1):
         train_loss = 0
         for step, data in enumerate(train_loader):
-            loss = model(*[tensor.to(device) for tensor in data])
+            loss = model(*data)
 
             optimizer.zero_grad()
             loss.backward()

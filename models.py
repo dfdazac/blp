@@ -63,10 +63,8 @@ class LinkPrediction(nn.Module):
 
         # Scores for negative samples
         neg_embs = ent_embs.view(batch_size * 2, -1)[neg_idx]
-        heads, tails = torch.chunk(neg_embs, chunks=2, dim=0)
-        neg_scores = self.score_fn(heads.view(batch_size, -1, self.dim),
-                                   tails.view(batch_size, -1, self.dim),
-                                   rels)
+        heads, tails = torch.chunk(neg_embs, chunks=2, dim=2)
+        neg_scores = self.score_fn(heads.squeeze(), tails.squeeze(), rels)
 
         model_loss = self.loss_fn(pos_scores, neg_scores)
         return model_loss + reg_loss

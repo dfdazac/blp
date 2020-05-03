@@ -52,8 +52,7 @@ def get_negative_sampling_indices(batch_size, num_negatives):
          [5, 3],
          [4, 6],
          [1, 7]]
-    For convenient indexing of embeddings, the returned array has shape
-    (2, batch_size * num_negatives).
+    The returned array has shape (batch_size, num_negatives, 2).
     """
     num_ents = batch_size * 2
     idx = torch.arange(num_ents).reshape(batch_size, 2)
@@ -75,7 +74,7 @@ def get_negative_sampling_indices(batch_size, num_negatives):
     neg_idx = idx.repeat((num_negatives, 1))
     neg_idx[row_selector, col_selector] = random_idx
 
-    return neg_idx.t()
+    return neg_idx.reshape(batch_size, num_negatives, 2)
 
 
 class GraphDataset(Dataset):
@@ -89,7 +88,8 @@ class GraphDataset(Dataset):
             entities and relations to IDs are saved to disk (for reuse with
             other datasets).
     """
-    def __init__(self, triples_file, neg_samples=None, write_maps_file=False):
+    def __init__(self, triples_file, neg_samples=None, write_maps_file=False,
+                 num_devices=1):
         directory = osp.dirname(triples_file)
         maps_path = osp.join(directory, 'maps.pt')
 
@@ -145,6 +145,7 @@ class GraphDataset(Dataset):
         self.directory = directory
         self.maps_path = maps_path
         self.neg_samples = neg_samples
+        self.num_devices = num_devices
 
     def __getitem__(self, index):
         return self.triples[index]
@@ -183,8 +184,10 @@ class TextGraphDataset(GraphDataset):
     """
 
     def __init__(self, triples_file, neg_samples, max_len, tokenizer,
-                 drop_stopwords, write_maps_file=False, use_cached_text=False):
-        super().__init__(triples_file, neg_samples, write_maps_file)
+                 drop_stopwords, write_maps_file=False, use_cached_text=False,
+                 num_devices=1):
+        super().__init__(triples_file, neg_samples, write_maps_file,
+                         num_devices)
 
         maps = torch.load(self.maps_path)
         ent_ids = maps['ent_ids']
@@ -273,7 +276,7 @@ class TextGraphDataset(GraphDataset):
         entity descriptions, and the relation types between them.
         Use as a collate_fn for a DataLoader.
         """
-        batch_size = len(data_list)
+        batch_size = len(data_list) // self.num_devices
         if batch_size <= 1:
             raise ValueError('collate_text can only work with batch sizes'
                              ' larger than 1.')
