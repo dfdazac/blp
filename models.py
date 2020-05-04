@@ -75,15 +75,22 @@ class InductiveLinkPrediction(LinkPrediction):
     def _encode_entity(self, text_tok, text_mask):
         raise NotImplementedError
 
-    def forward(self, text_tok, text_mask, rels, neg_idx):
+    def forward(self, text_tok, text_mask, rels=None, neg_idx=None):
         batch_size, _, num_text_tokens = text_tok.shape
 
         # Encode text into an entity representation from its description
         ent_embs = self.encode(text_tok.view(-1, num_text_tokens),
                                text_mask.view(-1, num_text_tokens))
-        ent_embs = ent_embs.view(batch_size, 2, -1)
 
-        return self.compute_loss(ent_embs, rels, neg_idx)
+        if rels is None and neg_idx is None:
+            # Forward is being used to compute entity embeddings only
+            out = ent_embs
+        else:
+            # Forward is being used to compute link prediction loss
+            ent_embs = ent_embs.view(batch_size, 2, -1)
+            out = self.compute_loss(ent_embs, rels, neg_idx)
+
+        return out
 
 
 class BertEmbeddingsLP(InductiveLinkPrediction):
