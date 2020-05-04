@@ -6,6 +6,7 @@ import string
 import nltk
 from tqdm import tqdm
 from nltk.corpus import stopwords
+import logging
 
 UNK = '[UNK]'
 nltk.download('stopwords')
@@ -202,6 +203,10 @@ class TextGraphDataset(GraphDataset):
         if use_cached_text:
             if osp.exists(cached_text_path):
                 self.text_data = torch.load(cached_text_path)
+                logger = logging.getLogger()
+                logger.info(f'Loaded cached text data for'
+                            f' {self.text_data.shape[0]} entities,'
+                            f' and maximum length {self.text_data.shape[1]}.')
             else:
                 raise LookupError(f'Cached text file not found at'
                                   f' {cached_text_path}')
@@ -245,7 +250,7 @@ class TextGraphDataset(GraphDataset):
                         # Last cell contains sequence length
                         self.text_data[ent_id, -1] = text_len
 
-                        progress.update(1)
+                        progress.update()
 
             progress.close()
 
