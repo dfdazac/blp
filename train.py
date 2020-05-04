@@ -13,6 +13,7 @@ from collections import defaultdict
 import numpy as np
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import accuracy_score
+from tqdm import tqdm
 
 from data import CATEGORY_IDS
 from data import GraphDataset, TextGraphDataset, GloVeTokenizer
@@ -46,22 +47,20 @@ def config():
     lr = 1e-3
     use_scheduler = False
     batch_size = 64
+    emb_batch_size = 128
     eval_batch_size = 64
     max_epochs = 5
     num_workers = 0
     checkpoint = None
-    use_cached_text = False
+    use_cached_text = True
 
 
 @ex.capture
 @torch.no_grad()
 def eval_link_prediction(model, triples_loader, text_dataset, entities,
-                         epoch, _run: Run, _log: Logger,
+                         epoch, emb_batch_size, _run: Run, _log: Logger,
                          prefix='', max_num_batches=None,
                          filtering_graph=None, new_entities=None):
-    if device != torch.device('cpu'):
-        model = model.module
-
     compute_filtered = filtering_graph is not None
     mrr_by_position = torch.zeros(3, dtype=torch.float).to(device)
     mrr_pos_counts = torch.zeros_like(mrr_by_position)
@@ -76,7 +75,7 @@ def eval_link_prediction(model, triples_loader, text_dataset, entities,
     mrr_filt = 0.0
     hits_at_k_filt = {pos: 0.0 for pos in hit_positions}
 
-    if isinstance(model, models.InductiveLinkPrediction):
+    if isinstance(model.module, models.InductiveLinkPrediction):
         num_entities = entities.shape[0]
         if compute_filtered:
             max_ent_id = max(filtering_graph.nodes)
@@ -85,33 +84,43 @@ def eval_link_prediction(model, triples_loader, text_dataset, entities,
         ent2idx = utils.make_ent2idx(entities, max_ent_id)
     else:
         # Transductive models have a lookup table of embeddings
-        num_entities = model.ent_emb.num_embeddings
+        num_entities = model.module.ent_emb.num_embeddings
         ent2idx = torch.arange(num_entities)
         entities = ent2idx
 
     # Create embedding lookup table for evaluation
-    ent_emb = torch.zeros((num_entities, model.dim), dtype=torch.float,
+    ent_emb = torch.zeros((num_entities, model.module.dim), dtype=torch.float,
                           device=device)
     idx = 0
+    progress = tqdm(desc='Computing entity embeddings', total=num_entities,
+                    mininterval=60)
     while idx < num_entities:
         # Get a batch of entity IDs and encode them
-        batch_ents = entities[idx:idx + triples_loader.batch_size]
+        batch_ents = entities[idx:idx + emb_batch_size]
 
-        if isinstance(model, models.InductiveLinkPrediction):
+        if isinstance(model.module, models.InductiveLinkPrediction):
             # Encode with entity descriptions
             data = text_dataset.get_entity_description(batch_ents)
             text_tok, text_mask, text_len = data
-            batch_emb = model.encode(text_tok.to(device), text_mask.to(device))
+            batch_emb = model(text_tok.unsqueeze(1), text_mask.unsqueeze(1))
         else:
             # Encode from lookup table
-            batch_emb = model.encode(batch_ents.to(device))
+            batch_emb = model(batch_ents)
 
         ent_emb[idx:idx + batch_ents.shape[0]] = batch_emb
-        idx += triples_loader.batch_size
+
+        progress.update(batch_ents.shape[0])
+
+        idx += emb_batch_size
+
+    progress.close()
 
     ent_emb = ent_emb.unsqueeze(0)
 
     batch_count = 0
+    total = len(triples_loader) if max_num_batches is None else max_num_batches
+    progress = tqdm(desc='Computing metrics on set of triples...',
+                    total=total, mininterval=60)
     for i, triples in enumerate(triples_loader):
         if max_num_batches is not None and i == max_num_batches:
             break
@@ -127,11 +136,11 @@ def eval_link_prediction(model, triples_loader, text_dataset, entities,
         # Embed triple
         head_embs = ent_emb.squeeze()[heads]
         tail_embs = ent_emb.squeeze()[tails]
-        rel_embs = model.rel_emb(rels.to(device))
+        rel_embs = model.module.rel_emb(rels.to(device))
 
         # Score all possible heads and tails
-        heads_predictions = model.score_fn(ent_emb, tail_embs, rel_embs)
-        tails_predictions = model.score_fn(head_embs, ent_emb, rel_embs)
+        heads_predictions = model.module.score_fn(ent_emb, tail_embs, rel_embs)
+        tails_predictions = model.module.score_fn(head_embs, ent_emb, rel_embs)
 
         pred_ents = torch.cat((heads_predictions, tails_predictions))
         true_ents = torch.cat((heads, tails))
@@ -171,6 +180,9 @@ def eval_link_prediction(model, triples_loader, text_dataset, entities,
                 mrr_cat_count += batch_mrr_cat_count
 
         batch_count += 1
+        progress.update()
+
+    progress.close()
 
     for hits_dict in (hits_at_k, hits_at_k_filt):
         for k in hits_dict:
@@ -247,8 +259,8 @@ def get_model(model, dim, rel_model, loss_fn, num_entities, num_relations,
 @ex.command
 def link_prediction(dataset, inductive, dim, model, rel_model, loss_fn,
                     encoder_name, regularizer, max_len, num_negatives, lr,
-                    use_scheduler, batch_size, eval_batch_size,
-                    max_epochs, num_workers, checkpoint, use_cached_text,
+                    use_scheduler, batch_size, emb_batch_size, eval_batch_size,
+                    max_epochs, checkpoint, use_cached_text,
                     _run: Run, _log: Logger):
     drop_stopwords = model in {'bert-bow', 'bert-dkrl',
                                'glove-bow', 'glove-dkrl'}
@@ -351,14 +363,15 @@ def link_prediction(dataset, inductive, dim, model, rel_model, loss_fn,
 
         _run.log_scalar('train_loss', train_loss / len(train_loader), epoch)
 
-        _log.info('Evaluating on sample of training set...')
+        _log.info('Evaluating on sample of training set')
         eval_link_prediction(model, train_eval_loader, train_data, train_ent,
-                             epoch, prefix='train',
+                             epoch, emb_batch_size, prefix='train',
                              max_num_batches=len(valid_loader))
 
-        _log.info('Evaluating on validation set...')
+        _log.info('Evaluating on validation set')
         _, val_mrr = eval_link_prediction(model, valid_loader, train_data,
-                                          train_val_ent, epoch, prefix='valid')
+                                          train_val_ent, epoch,
+                                          emb_batch_size, prefix='valid')
 
         # Keep checkpoint of best performing model (based on raw MRR)
         if val_mrr > best_valid_mrr:
@@ -369,15 +382,17 @@ def link_prediction(dataset, inductive, dim, model, rel_model, loss_fn,
     if max_epochs > 0:
         model.load_state_dict(torch.load(checkpoint_file))
 
-    _log.info('Evaluating on validation set (with filtering)...')
+    _log.info('Evaluating on validation set (with filtering)')
     eval_link_prediction(model, valid_loader, train_data, train_val_ent,
-                         max_epochs + 1, prefix='valid', filtering_graph=graph,
+                         max_epochs + 1, emb_batch_size, prefix='valid',
+                         filtering_graph=graph,
                          new_entities=val_new_ents)
 
-    _log.info('Evaluating on test set...')
+    _log.info('Evaluating on test set')
     ent_emb, _ = eval_link_prediction(model, test_loader, train_data,
                                       train_val_test_ent, max_epochs + 1,
-                                      prefix='test', filtering_graph=graph,
+                                      emb_batch_size, prefix='test',
+                                      filtering_graph=graph,
                                       new_entities=test_new_ents)
 
     # Save final entity embeddings obtained with trained encoder
