@@ -31,7 +31,7 @@ def file_to_ids(file_path):
     return str2id
 
 
-def get_negative_sampling_indices(batch_size, num_negatives):
+def get_negative_sampling_indices(batch_size, num_negatives, repeats=1):
     """"Obtain indices for negative sampling within a batch of entity pairs.
     Indices are sampled from a reshaped array of indices. For example,
     if there are 4 pairs (batch_size=4), the array of indices is
@@ -62,19 +62,22 @@ def get_negative_sampling_indices(batch_size, num_negatives):
     zeros = torch.zeros(batch_size, 2)
     head_weights = torch.ones(batch_size, num_ents, dtype=torch.float)
     head_weights.scatter_(1, idx, zeros)
-    random_idx = head_weights.multinomial(num_negatives, replacement=True)
+    random_idx = head_weights.multinomial(num_negatives * repeats,
+                                          replacement=True)
     random_idx = random_idx.t().flatten()
 
     # Select randomly the first or the second column
-    row_selector = torch.arange(batch_size * num_negatives)
-    col_selector = torch.randint(0, 2, [batch_size * num_negatives])
+    row_selector = torch.arange(batch_size * num_negatives * repeats)
+    col_selector = torch.randint(0, 2, [batch_size * num_negatives * repeats])
 
     # Fill the array of negative samples with the sampled random entities
     # at the right positions
-    neg_idx = idx.repeat((num_negatives, 1))
+    neg_idx = idx.repeat((num_negatives * repeats, 1))
     neg_idx[row_selector, col_selector] = random_idx
+    neg_idx = neg_idx.reshape(-1, batch_size * repeats, 2)
+    neg_idx.transpose_(0, 1)
 
-    return neg_idx.reshape(batch_size, num_negatives, 2)
+    return neg_idx
 
 
 class GraphDataset(Dataset):
@@ -284,7 +287,8 @@ class TextGraphDataset(GraphDataset):
         pos_pairs, rels = torch.stack(data_list).split(2, dim=1)
         text_tok, text_mask, text_len = self.get_entity_description(pos_pairs)
 
-        neg_idx = get_negative_sampling_indices(batch_size, self.neg_samples)
+        neg_idx = get_negative_sampling_indices(batch_size, self.neg_samples,
+                                                repeats=self.num_devices)
 
         return text_tok, text_mask, rels, neg_idx
 

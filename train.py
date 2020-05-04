@@ -334,7 +334,7 @@ def link_prediction(dataset, inductive, dim, model, rel_model, loss_fn,
     for epoch in range(1, max_epochs + 1):
         train_loss = 0
         for step, data in enumerate(train_loader):
-            loss = model(*data)
+            loss = model(*data).mean()
 
             optimizer.zero_grad()
             loss.backward()
@@ -344,7 +344,7 @@ def link_prediction(dataset, inductive, dim, model, rel_model, loss_fn,
 
             train_loss += loss.item()
 
-            if step % 500 == 0:
+            if step % int(len(train_loader) * 0.05) == 0:
                 _log.info(f'Epoch {epoch}/{max_epochs} '
                           f'[{step}/{len(train_loader)}]: {loss.item():.6f}')
                 _run.log_scalar('batch_loss', loss.item())
