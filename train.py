@@ -47,7 +47,7 @@ def config():
     lr = 1e-3
     use_scheduler = False
     batch_size = 64
-    emb_batch_size = 128
+    emb_batch_size = 16
     eval_batch_size = 64
     max_epochs = 5
     num_workers = 0
@@ -60,7 +60,8 @@ def config():
 def eval_link_prediction(model, triples_loader, text_dataset, entities,
                          epoch, emb_batch_size, _run: Run, _log: Logger,
                          prefix='', max_num_batches=None,
-                         filtering_graph=None, new_entities=None):
+                         filtering_graph=None, new_entities=None,
+                         return_embeddings=False):
     compute_filtered = filtering_graph is not None
     mrr_by_position = torch.zeros(3, dtype=torch.float).to(device)
     mrr_pos_counts = torch.zeros_like(mrr_by_position)
@@ -92,8 +93,8 @@ def eval_link_prediction(model, triples_loader, text_dataset, entities,
     ent_emb = torch.zeros((num_entities, model.module.dim), dtype=torch.float,
                           device=device)
     idx = 0
-    progress = tqdm(desc='Computing entity embeddings', total=num_entities,
-                    mininterval=60)
+    num_iters = np.ceil(num_entities / emb_batch_size)
+    iters_count = 0
     while idx < num_entities:
         # Get a batch of entity IDs and encode them
         batch_ents = entities[idx:idx + emb_batch_size]
@@ -109,18 +110,17 @@ def eval_link_prediction(model, triples_loader, text_dataset, entities,
 
         ent_emb[idx:idx + batch_ents.shape[0]] = batch_emb
 
-        progress.update(batch_ents.shape[0])
+        iters_count += 1
+        if iters_count % np.ceil(0.2 * num_iters) == 0:
+            _log.info(f'[{idx + batch_ents.shape[0]:,}/{num_entities}]')
 
         idx += emb_batch_size
-
-    progress.close()
 
     ent_emb = ent_emb.unsqueeze(0)
 
     batch_count = 0
+    _log.info('Computing metrics on set of triples')
     total = len(triples_loader) if max_num_batches is None else max_num_batches
-    progress = tqdm(desc='Computing metrics on set of triples...',
-                    total=total, mininterval=60)
     for i, triples in enumerate(triples_loader):
         if max_num_batches is not None and i == max_num_batches:
             break
@@ -180,9 +180,8 @@ def eval_link_prediction(model, triples_loader, text_dataset, entities,
                 mrr_cat_count += batch_mrr_cat_count
 
         batch_count += 1
-        progress.update()
-
-    progress.close()
+        if (i + 1) % int(0.2 * total) == 0:
+            _log.info(f'[{i + 1:,}/{total:,}]')
 
     for hits_dict in (hits_at_k, hits_at_k_filt):
         for k in hits_dict:
@@ -228,7 +227,12 @@ def eval_link_prediction(model, triples_loader, text_dataset, entities,
                 log_str += f'{cat}_mrr: {mrr_by_category[i, cat_id]:.4f}  '
             _log.info(log_str)
 
-    return ent_emb, mrr
+    if return_embeddings:
+        out = (mrr, ent_emb)
+    else:
+        out = (mrr, None)
+
+    return out
 
 
 def get_model(model, dim, rel_model, loss_fn, num_entities, num_relations,
@@ -356,7 +360,7 @@ def link_prediction(dataset, inductive, dim, model, rel_model, loss_fn,
 
             train_loss += loss.item()
 
-            if step % int(len(train_loader) * 0.05) == 0:
+            if step % int(0.05 * len(train_loader)) == 0:
                 _log.info(f'Epoch {epoch}/{max_epochs} '
                           f'[{step}/{len(train_loader)}]: {loss.item():.6f}')
                 _run.log_scalar('batch_loss', loss.item())
@@ -369,7 +373,7 @@ def link_prediction(dataset, inductive, dim, model, rel_model, loss_fn,
                              max_num_batches=len(valid_loader))
 
         _log.info('Evaluating on validation set')
-        _, val_mrr = eval_link_prediction(model, valid_loader, train_data,
+        val_mrr, _ = eval_link_prediction(model, valid_loader, train_data,
                                           train_val_ent, epoch,
                                           emb_batch_size, prefix='valid')
 
@@ -389,11 +393,12 @@ def link_prediction(dataset, inductive, dim, model, rel_model, loss_fn,
                          new_entities=val_new_ents)
 
     _log.info('Evaluating on test set')
-    ent_emb, _ = eval_link_prediction(model, test_loader, train_data,
+    _, ent_emb = eval_link_prediction(model, test_loader, train_data,
                                       train_val_test_ent, max_epochs + 1,
                                       emb_batch_size, prefix='test',
                                       filtering_graph=graph,
-                                      new_entities=test_new_ents)
+                                      new_entities=test_new_ents,
+                                      return_embeddings=True)
 
     # Save final entity embeddings obtained with trained encoder
     torch.save(ent_emb, osp.join(OUT_PATH, f'ent_emb-{_run._id}.pt'))
