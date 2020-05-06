@@ -6,7 +6,7 @@ import random
 import os.path as osp
 from collections import Counter, defaultdict
 import torch
-from pprint import pprint
+import rdflib
 
 
 def parse_triples(triples_file):
@@ -153,33 +153,41 @@ def drop_entities(triples_file, train_size=0.8, valid_size=0.1, test_size=0.1,
     # removed in sequence)
     test_ents = set(dropped_entities[:num_test])
     val_ents = set(dropped_entities[num_test:num_test + num_val])
+    train_ents = set(graph.nodes())
 
-    # Check that val and test entity sets are disjoint
+    # Check that entity sets are disjoint
+    assert len(train_ents.intersection(val_ents)) == 0
+    assert len(train_ents.intersection(test_ents)) == 0
     assert len(val_ents.intersection(test_ents)) == 0
 
-    # Check that training and validation graph do not contain test entities
+    # Check that validation graph does not contain test entities
     val_graph = nx.MultiDiGraph()
     val_edges = []
     for entity in val_ents:
         val_edges += dropped_edges[entity]
     val_graph.add_weighted_edges_from(val_edges)
     assert len(set(val_graph.nodes()).intersection(test_ents)) == 0
-    assert len(set(graph.nodes()).intersection(test_ents)) == 0
 
-    names = ('dev', 'test')
+    names = ('train', 'dev', 'test')
 
     dirname = osp.dirname(triples_file)
     prefix = 'ind-'
 
-    for entity_set, set_name in zip((val_ents, test_ents), names):
+    for entity_set, set_name in zip((train_ents, val_ents, test_ents), names):
+        # Save file with entities for set
+        with open(osp.join(dirname, f'{set_name}-ents.txt'), 'w') as file:
+            file.writelines('\n'.join(entity_set))
+
+        if set_name == 'train':
+            # Triples for train split are saved later
+            continue
+
+        # Save file with triples for entities in set
         with open(osp.join(dirname, f'{prefix}{set_name}.tsv'), 'w') as file:
             for entity in entity_set:
                 triples = dropped_edges[entity]
                 for head, tail, rel in triples:
                     file.write(f'{head}\t{rel}\t{tail}\n')
-
-        with open(osp.join(dirname, f'{set_name}-ents.txt'), 'w') as file:
-            file.writelines('\n'.join(entity_set))
 
     with open(osp.join(dirname, f'{prefix}train.tsv'), 'w') as train_file:
         for head, tail, rel in graph.edges(data=True):
