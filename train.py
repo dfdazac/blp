@@ -53,6 +53,9 @@ def config():
     num_workers = 0
     checkpoint = None
     use_cached_text = True
+    run_file = ''
+    queries_file = ''
+    descriptions_file = ''
 
 
 @ex.capture
@@ -487,6 +490,128 @@ def node_classification(dataset, checkpoint, _run: Run, _log: Logger):
 
     _log.info(f'Train accuracy: {train_acc:.4f}')
     _log.info(f'Test accuracy: {test_acc:.4f}')
+
+
+@ex.command
+def rerank(run_file, queries_file, descriptions_file, model, dim, rel_model,
+           encoder_name, checkpoint, emb_batch_size):
+
+    def encode_batch(batch):
+        tokenized_data = tokenizer.batch_encode_plus(batch,
+                                                     max_length=32,
+                                                     pad_to_max_length=True,
+                                                     return_token_type_ids=False,
+                                                     return_tensors='pt')
+        tokens = tokenized_data['input_ids'].to(device)
+        masks = tokenized_data['attention_mask'].to(device)
+
+        return encoder.encode(tokens.to(device), masks.to(device))
+
+    if model.startswith('bert') or model == 'bed':
+        tokenizer = BertTokenizer.from_pretrained(encoder_name)
+    else:
+        tokenizer = GloVeTokenizer('data/glove/glove.6B.300d-maps.pt')
+
+    encoder = get_model(model, dim, rel_model, encoder_name=encoder_name,
+                        loss_fn='margin', num_entities=0, num_relations=1,
+                        regularizer=0.0).to(device)
+    state_dict = torch.load(checkpoint, map_location=device)
+
+    # We don't need relation embeddings for this task
+    state_dict.pop('rel_emb.weight', None)
+    encoder.load_state_dict(state_dict, strict=False)
+    for param in encoder.parameters():
+        param.requires_grad = False
+
+    # Encode entity descriptions
+    entity2idx = dict()
+    descriptions_batch = []
+    ent_embeddings = []
+    progress = tqdm(desc='Encoding entity descriptions')
+    with open(descriptions_file) as f:
+        for i, line in enumerate(f):
+            values = line.strip().split('\t')
+            entity = values[0]
+            entity2idx[entity] = i
+            text = ' '.join(values[1:])
+            descriptions_batch.append(text)
+
+            if len(descriptions_batch) == emb_batch_size:
+                embedding = encode_batch(descriptions_batch)
+                ent_embeddings.append(embedding)
+                descriptions_batch = []
+                progress.update(emb_batch_size)
+
+        progress.close()
+        if len(descriptions_batch) > 0:
+            embedding = encode_batch(descriptions_batch)
+            ent_embeddings.append(embedding)
+
+    ent_embeddings = torch.cat(ent_embeddings)
+    # ent_embeddings = torch.load('qent_embeddings.pt', map_location=device)
+    # torch.save(ent_embeddings, 'qent_embeddings.pt')
+
+    # Read queries
+    id2query = dict()
+    with open(queries_file) as f:
+        for line in f:
+            values = line.strip().split('\t')
+            query_id = values[0]
+            query = ' '.join(values[1:])
+            id2query[query_id] = query
+
+    # Read rankings
+    queryid2results = defaultdict(list)
+    with open(run_file) as f:
+        for line in f:
+            values = line.strip().split()
+            query_id, q0, entity, rank, score, method = values
+            queryid2results[query_id].append((entity, float(score)))
+
+    # Write rerankings
+    run_file_name = osp.splitext(osp.basename(run_file))[0]
+    rerank_file_name = f'{run_file_name}-{model}-{rel_model}.run'
+    rerank_file = osp.join(osp.dirname(run_file), rerank_file_name)
+    progress = tqdm(desc='Reranking', total=len(queryid2results))
+    with open(rerank_file, 'w') as f:
+        for query_id, results in queryid2results.items():
+            # Encode query
+            query = id2query[query_id]
+            query_tokens = tokenizer.encode(query, return_tensors='pt',
+                                            max_length=32)
+            query_embedding = encoder.encode(query_tokens.to(device),
+                                             text_mask=None)
+
+            # Get embeddings of entities to rerank for this query
+            ent_ids_to_rerank = []
+            original_scores = []
+            selected_results = []
+            for entity, orig_score in results:
+                if entity in entity2idx:
+                    ent_ids_to_rerank.append(entity2idx[entity])
+                    original_scores.append(orig_score)
+                    selected_results.append(entity)
+
+            candidate_embeddings = ent_embeddings[ent_ids_to_rerank]
+
+            # Compute relevance
+            scores = candidate_embeddings @ query_embedding.t()
+            scores = scores.flatten().cpu().tolist()
+
+            results_scores = zip(selected_results, scores, original_scores)
+            alpha = 0.4
+            results_scores = [[result, alpha * s1 + (1 - alpha) * s2] for result, s1, s2 in results_scores]
+            sorted_entity_score_pairs = sorted(results_scores,
+                                               key=lambda x: x[1],
+                                               reverse=True)
+
+            for i, (entity, score) in enumerate(sorted_entity_score_pairs):
+                f.write(f'{query_id}\tQ0\t{entity}\t{i + 1}\t{score:.6f}'
+                        f'\t{model}-{rel_model}\n')
+
+            progress.update()
+
+    progress.close()
 
 
 ex.run_commandline()

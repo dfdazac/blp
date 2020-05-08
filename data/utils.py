@@ -301,11 +301,80 @@ def categorize_relations(triples_file):
     print(f'Saved relation categories to {output_path}')
 
 
+def get_ranking_descriptions(run_file, dbpedia_file, redirects_file):
+    # Read run file and get unique set of entities
+    print('Reading unique entities from run file...')
+    entities = set()
+    with open(run_file) as f:
+        for line in f:
+            values = line.strip().split()
+            entities.add(values[2])
+
+    basename = osp.splitext(osp.basename(run_file))[0]
+    output_file = osp.join(osp.dirname(run_file),
+                           basename + '-descriptions.txt')
+    missing_file = osp.join(osp.dirname(run_file), basename + '-missing.txt')
+
+    dbpedia_ns = 'http://dbpedia.org/resource/'
+    dbpedia_prefix = 'dbpedia:'
+
+    print('Reading redirects...')
+    redir2entities = defaultdict(set)
+    with open(redirects_file) as f:
+        for line in f:
+            values = line.strip().split()
+            norm_uri = values[0].replace(dbpedia_ns, dbpedia_prefix, 1)
+            redirect = values[2]
+            if norm_uri in entities:
+                redir2entities[redirect].add(norm_uri)
+
+    # Iterate over DBpedia dump and keep required descriptions
+    print('Retrieving descriptions of entities...')
+
+    read_entities = set()
+    progress = tqdm(file=sys.stdout)
+    with open(dbpedia_file) as f, open(output_file, 'w') as out:
+        for line in f:
+            g = rdflib.Graph().parse(data=line, format='n3')
+            for (page, rel, description) in g:
+                norm_uri = f'<{page.replace(dbpedia_ns, dbpedia_prefix, 1)}>'
+                if norm_uri in entities and norm_uri not in read_entities:
+                    read_entities.add(norm_uri)
+                    out.write(f'{norm_uri}\t{description.value}\n')
+
+                page_n3_format = page.n3()
+                if page_n3_format in redir2entities:
+                    for entity in redir2entities[page_n3_format]:
+                        if entity not in read_entities:
+                            read_entities.add(entity)
+                            out.write(f'{entity}\t{description.value}\n')
+
+            if len(read_entities) == len(entities):
+                break
+
+            progress.update()
+
+    progress.close()
+
+    with open(missing_file, 'w') as f:
+        for entity in entities.difference(read_entities):
+            f.write(f'{entity}\n')
+
+    print(f'Retrieved {len(read_entities):,} descriptions, out of'
+          f' {len(entities):,} entities.')
+    print(f'Descriptions saved in {output_file}')
+    print(f'Entities with missing descriptions saved in {missing_file}')
+
+
 if __name__ == '__main__':
     parser = ArgumentParser()
     parser.add_argument('command', choices=['drop_entities', 'load_embs',
-                                            'categorize'])
+                                            'categorize',
+                                            'get_ranking_descriptions'])
     parser.add_argument('--file', help='Input file')
+    parser.add_argument('--dbp_file', help='DBpedia ttl file with rdf:comment'
+                                           ' field for entities')
+    parser.add_argument('--redirects_file', help='File redirecting entities')
     parser.add_argument('--types_file', help='Tab-separated file of entities'
                                              ' and their type', default=None)
     parser.add_argument('--train_size', help='Fraction of entities used for'
@@ -320,3 +389,8 @@ if __name__ == '__main__':
         load_embeddings(args.file)
     elif args.command == 'categorize':
         categorize_relations(args.file)
+    elif args.command == 'get_ranking_descriptions':
+        if args.file is None or args.dbp_file is None:
+            raise ValueError('--file and --dbp_file must be provided to'
+                             ' get_ranking_descriptions')
+        get_ranking_descriptions(args.file, args.dbp_file, args.redirects_file)
