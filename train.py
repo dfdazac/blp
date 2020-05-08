@@ -34,8 +34,8 @@ if all([uri, database]):
 
 @ex.config
 def config():
-    dataset = 'umls'
-    inductive = False
+    dataset = 'Wikidata5M'
+    inductive = True
     dim = 128
     model = 'bert-bow'
     rel_model = 'transe'
@@ -47,7 +47,7 @@ def config():
     lr = 1e-3
     use_scheduler = False
     batch_size = 64
-    emb_batch_size = 16
+    emb_batch_size = 512
     eval_batch_size = 64
     max_epochs = 5
     num_workers = 0
@@ -112,7 +112,7 @@ def eval_link_prediction(model, triples_loader, text_dataset, entities,
 
         iters_count += 1
         if iters_count % np.ceil(0.2 * num_iters) == 0:
-            _log.info(f'[{idx + batch_ents.shape[0]:,}/{num_entities}]')
+            _log.info(f'[{idx + batch_ents.shape[0]:,}/{num_entities:,}]')
 
         idx += emb_batch_size
 
@@ -311,18 +311,25 @@ def link_prediction(dataset, inductive, dim, model, rel_model, loss_fn,
     test_loader = DataLoader(test_data, eval_batch_size)
 
     # Build graph with all triples to compute filtered metrics
-    graph = nx.MultiDiGraph()
-    all_triples = torch.cat((train_data.triples,
-                             valid_data.triples,
-                             test_data.triples))
-    graph.add_weighted_edges_from(all_triples.tolist())
+    if dataset != 'Wikidata5M':
+        graph = nx.MultiDiGraph()
+        all_triples = torch.cat((train_data.triples,
+                                 valid_data.triples,
+                                 test_data.triples))
+        graph.add_weighted_edges_from(all_triples.tolist())
 
-    train_ent = set(train_data.entities.tolist())
-    train_val_ent = set(valid_data.entities.tolist()).union(train_ent)
-    train_val_test_ent = set(test_data.entities.tolist()).union(train_val_ent)
+        train_ent = set(train_data.entities.tolist())
+        train_val_ent = set(valid_data.entities.tolist()).union(train_ent)
+        train_val_test_ent = set(test_data.entities.tolist()).union(train_val_ent)
+        val_new_ents = train_val_ent.difference(train_ent)
+        test_new_ents = train_val_test_ent.difference(train_val_ent)
+    else:
+        graph = None
 
-    val_new_ents = train_val_ent.difference(train_ent)
-    test_new_ents = train_val_test_ent.difference(train_val_ent)
+        train_ent = set(train_data.entities.tolist())
+        train_val_ent = set(valid_data.entities.tolist())
+        train_val_test_ent = set(test_data.entities.tolist())
+        val_new_ents = test_new_ents = None
 
     _run.log_scalar('num_train_entities', len(train_ent))
 
@@ -367,10 +374,11 @@ def link_prediction(dataset, inductive, dim, model, rel_model, loss_fn,
 
         _run.log_scalar('train_loss', train_loss / len(train_loader), epoch)
 
-        _log.info('Evaluating on sample of training set')
-        eval_link_prediction(model, train_eval_loader, train_data, train_ent,
-                             epoch, emb_batch_size, prefix='train',
-                             max_num_batches=len(valid_loader))
+        if dataset != 'Wikidata5M':
+            _log.info('Evaluating on sample of training set')
+            eval_link_prediction(model, train_eval_loader, train_data, train_ent,
+                                 epoch, emb_batch_size, prefix='train',
+                                 max_num_batches=len(valid_loader))
 
         _log.info('Evaluating on validation set')
         val_mrr, _ = eval_link_prediction(model, valid_loader, train_data,
@@ -386,11 +394,19 @@ def link_prediction(dataset, inductive, dim, model, rel_model, loss_fn,
     if max_epochs > 0:
         model.load_state_dict(torch.load(checkpoint_file))
 
+    if dataset == 'Wikidata5M':
+        graph = nx.MultiDiGraph()
+        graph.add_weighted_edges_from(valid_data.triples.tolist())
+
     _log.info('Evaluating on validation set (with filtering)')
     eval_link_prediction(model, valid_loader, train_data, train_val_ent,
                          max_epochs + 1, emb_batch_size, prefix='valid',
                          filtering_graph=graph,
                          new_entities=val_new_ents)
+
+    if dataset == 'Wikidata5M':
+        graph = nx.MultiDiGraph()
+        graph.add_weighted_edges_from(test_data.triples.tolist())
 
     _log.info('Evaluating on test set')
     _, ent_emb = eval_link_prediction(model, test_loader, train_data,
