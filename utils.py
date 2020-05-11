@@ -1,5 +1,31 @@
 import torch
 import logging
+import models
+
+
+def get_model(model, dim, rel_model, loss_fn, num_entities, num_relations,
+              encoder_name, regularizer):
+    if model == 'bed':
+        return models.BertEmbeddingsLP(dim, rel_model, loss_fn, num_relations,
+                                       encoder_name, regularizer)
+    elif model == 'bert-bow':
+        return models.BOW(rel_model, loss_fn, num_relations, regularizer,
+                          encoder_name=encoder_name)
+    elif model == 'bert-dkrl':
+        return models.DKRL(dim, rel_model, loss_fn, num_relations, regularizer,
+                           encoder_name=encoder_name)
+    elif model == 'glove-bow':
+        return models.BOW(rel_model, loss_fn, num_relations, regularizer,
+                          embeddings='data/glove/glove.6B.300d.pt')
+    elif model == 'glove-dkrl':
+        return models.DKRL(dim, rel_model, loss_fn, num_relations, regularizer,
+                           embeddings='data/glove/glove.6B.300d.pt')
+    elif model == 'transductive':
+        return models.TransductiveLinkPrediction(dim, rel_model, loss_fn,
+                                                 num_entities, num_relations,
+                                                 regularizer)
+    else:
+        raise ValueError(f'Unkown model {model}')
 
 
 def make_ent2idx(entities, max_ent_id):

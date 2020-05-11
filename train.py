@@ -13,7 +13,6 @@ from collections import defaultdict
 import numpy as np
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import accuracy_score
-from tqdm import tqdm
 
 from data import CATEGORY_IDS
 from data import GraphDataset, TextGraphDataset, GloVeTokenizer
@@ -238,31 +237,6 @@ def eval_link_prediction(model, triples_loader, text_dataset, entities,
     return out
 
 
-def get_model(model, dim, rel_model, loss_fn, num_entities, num_relations,
-              encoder_name, regularizer):
-    if model == 'bed':
-        return models.BertEmbeddingsLP(dim, rel_model, loss_fn, num_relations,
-                                       encoder_name, regularizer)
-    elif model == 'bert-bow':
-        return models.BOW(rel_model, loss_fn, num_relations, regularizer,
-                          encoder_name=encoder_name)
-    elif model == 'bert-dkrl':
-        return models.DKRL(dim, rel_model, loss_fn, num_relations, regularizer,
-                           encoder_name=encoder_name)
-    elif model == 'glove-bow':
-        return models.BOW(rel_model, loss_fn, num_relations, regularizer,
-                          embeddings='data/glove/glove.6B.300d.pt')
-    elif model == 'glove-dkrl':
-        return models.DKRL(dim, rel_model, loss_fn, num_relations, regularizer,
-                           embeddings='data/glove/glove.6B.300d.pt')
-    elif model == 'transductive':
-        return models.TransductiveLinkPrediction(dim, rel_model, loss_fn,
-                                                 num_entities, num_relations,
-                                                 regularizer)
-    else:
-        raise ValueError(f'Unkown model {model}')
-
-
 @ex.command
 def link_prediction(dataset, inductive, dim, model, rel_model, loss_fn,
                     encoder_name, regularizer, max_len, num_negatives, lr,
@@ -340,8 +314,9 @@ def link_prediction(dataset, inductive, dim, model, rel_model, loss_fn,
     train_val_ent = torch.tensor(list(train_val_ent))
     train_val_test_ent = torch.tensor(list(train_val_test_ent))
 
-    model = get_model(model, dim, rel_model, loss_fn, len(train_val_test_ent),
-                      train_data.num_rels, encoder_name, regularizer)
+    model = utils.get_model(model, dim, rel_model, loss_fn,
+                            len(train_val_test_ent), train_data.num_rels,
+                            encoder_name, regularizer)
     if checkpoint is not None:
         model.load_state_dict(torch.load(checkpoint, map_location='cpu'))
 
@@ -490,141 +465,6 @@ def node_classification(dataset, checkpoint, _run: Run, _log: Logger):
 
     _log.info(f'Train accuracy: {train_acc:.4f}')
     _log.info(f'Test accuracy: {test_acc:.4f}')
-
-
-@ex.command
-def rerank(run_file, queries_file, descriptions_file, model, dim, rel_model,
-           encoder_name, checkpoint, emb_batch_size, _log: Logger):
-
-    def encode_batch(batch):
-        tokenized_data = tokenizer.batch_encode_plus(batch,
-                                                     max_length=64,
-                                                     pad_to_max_length=True,
-                                                     return_token_type_ids=False,
-                                                     return_tensors='pt')
-        tokens = tokenized_data['input_ids'].to(device)
-        masks = tokenized_data['attention_mask'].to(device)
-
-        return encoder.encode(tokens.to(device), masks.to(device))
-
-    if model.startswith('bert') or model == 'bed':
-        tokenizer = BertTokenizer.from_pretrained(encoder_name)
-    else:
-        tokenizer = GloVeTokenizer('data/glove/glove.6B.300d-maps.pt')
-
-    encoder = get_model(model, dim, rel_model, encoder_name=encoder_name,
-                        loss_fn='margin', num_entities=0, num_relations=1,
-                        regularizer=0.0).to(device)
-    encoder = torch.nn.DataParallel(encoder)
-    state_dict = torch.load(checkpoint, map_location=device)
-
-    # We don't need relation embeddings for this task
-    state_dict.pop('module.rel_emb.weight', None)
-    encoder.load_state_dict(state_dict, strict=False)
-    encoder = encoder.module
-    for param in encoder.parameters():
-        param.requires_grad = False
-
-    # Encode entity descriptions
-    run_file_name = osp.splitext(osp.basename(run_file))[0]
-    get_entity_embeddings = True
-    qent_checkpoint = osp.join(osp.dirname(checkpoint),
-                               f'{run_file_name}-qent-{osp.basename(checkpoint)}')
-    if osp.exists(qent_checkpoint):
-        _log.info(f'Loading entity embeddings from {qent_checkpoint}')
-        ent_embeddings = torch.load(qent_checkpoint, map_location=device)
-        get_entity_embeddings = False
-    else:
-        ent_embeddings = []
-
-    entity2idx = dict()
-    descriptions_batch = []
-    progress = tqdm(desc='Encoding entity descriptions')
-    with open(descriptions_file) as f:
-        for i, line in enumerate(f):
-            values = line.strip().split('\t')
-            entity = values[0]
-            entity2idx[entity] = i
-
-            if get_entity_embeddings:
-                text = ' '.join(values[1:])
-                descriptions_batch.append(text)
-
-                if len(descriptions_batch) == emb_batch_size:
-                    embedding = encode_batch(descriptions_batch)
-                    ent_embeddings.append(embedding)
-                    descriptions_batch = []
-                    progress.update(emb_batch_size)
-
-        if get_entity_embeddings and len(descriptions_batch) > 0:
-            embedding = encode_batch(descriptions_batch)
-            ent_embeddings.append(embedding)
-            ent_embeddings = torch.cat(ent_embeddings)
-            torch.save(ent_embeddings, qent_checkpoint)
-            _log.info(f'Saved entity embeddings to {qent_checkpoint}')
-
-        progress.close()
-
-    # Read queries
-    id2query = dict()
-    with open(queries_file) as f:
-        for line in f:
-            values = line.strip().split('\t')
-            query_id = values[0]
-            query = ' '.join(values[1:])
-            id2query[query_id] = query
-
-    # Read rankings
-    queryid2results = defaultdict(list)
-    with open(run_file) as f:
-        for line in f:
-            values = line.strip().split()
-            query_id, q0, entity, rank, score, method = values
-            queryid2results[query_id].append((entity, float(score)))
-
-    # Write rerankings
-    rerank_file_name = f'{run_file_name}-{model}-{rel_model}.run'
-    rerank_file = osp.join(osp.dirname(run_file), rerank_file_name)
-    progress = tqdm(desc='Reranking', total=len(queryid2results))
-    with open(rerank_file, 'w') as f:
-        for query_id, results in queryid2results.items():
-            # Encode query
-            query = id2query[query_id]
-            query_tokens = tokenizer.encode(query, return_tensors='pt',
-                                            max_length=64)
-            query_embedding = encoder.encode(query_tokens.to(device),
-                                             text_mask=None)
-
-            # Get embeddings of entities to rerank for this query
-            ent_ids_to_rerank = []
-            original_scores = []
-            selected_results = []
-            for entity, orig_score in results:
-                if entity in entity2idx:
-                    ent_ids_to_rerank.append(entity2idx[entity])
-                    original_scores.append(orig_score)
-                    selected_results.append(entity)
-
-            candidate_embeddings = ent_embeddings[ent_ids_to_rerank]
-
-            # Compute relevance
-            scores = candidate_embeddings @ query_embedding.t()
-            scores = scores.flatten().cpu().tolist()
-
-            results_scores = zip(selected_results, scores, original_scores)
-            alpha = 0.7
-            results_scores = [[result, alpha * s1 + (1 - alpha) * s2] for result, s1, s2 in results_scores]
-            sorted_entity_score_pairs = sorted(results_scores,
-                                               key=lambda x: x[1],
-                                               reverse=True)
-
-            for i, (entity, score) in enumerate(sorted_entity_score_pairs):
-                f.write(f'{query_id}\tQ0\t{entity}\t{i + 1}\t{score:.6f}'
-                        f'\t{model}-{rel_model}\n')
-
-            progress.update()
-
-    progress.close()
 
 
 ex.run_commandline()
