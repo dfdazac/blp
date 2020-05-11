@@ -494,11 +494,11 @@ def node_classification(dataset, checkpoint, _run: Run, _log: Logger):
 
 @ex.command
 def rerank(run_file, queries_file, descriptions_file, model, dim, rel_model,
-           encoder_name, checkpoint, emb_batch_size):
+           encoder_name, checkpoint, emb_batch_size, _log: Logger):
 
     def encode_batch(batch):
         tokenized_data = tokenizer.batch_encode_plus(batch,
-                                                     max_length=32,
+                                                     max_length=64,
                                                      pad_to_max_length=True,
                                                      return_token_type_ids=False,
                                                      return_tensors='pt')
@@ -515,41 +515,55 @@ def rerank(run_file, queries_file, descriptions_file, model, dim, rel_model,
     encoder = get_model(model, dim, rel_model, encoder_name=encoder_name,
                         loss_fn='margin', num_entities=0, num_relations=1,
                         regularizer=0.0).to(device)
+    encoder = torch.nn.DataParallel(encoder)
     state_dict = torch.load(checkpoint, map_location=device)
 
     # We don't need relation embeddings for this task
-    state_dict.pop('rel_emb.weight', None)
+    state_dict.pop('module.rel_emb.weight', None)
     encoder.load_state_dict(state_dict, strict=False)
+    encoder = encoder.module
     for param in encoder.parameters():
         param.requires_grad = False
 
     # Encode entity descriptions
+    run_file_name = osp.splitext(osp.basename(run_file))[0]
+    get_entity_embeddings = True
+    qent_checkpoint = osp.join(osp.dirname(checkpoint),
+                               f'{run_file_name}-qent-{osp.basename(checkpoint)}')
+    if osp.exists(qent_checkpoint):
+        _log.info(f'Loading entity embeddings from {qent_checkpoint}')
+        ent_embeddings = torch.load(qent_checkpoint, map_location=device)
+        get_entity_embeddings = False
+    else:
+        ent_embeddings = []
+
     entity2idx = dict()
     descriptions_batch = []
-    ent_embeddings = []
     progress = tqdm(desc='Encoding entity descriptions')
     with open(descriptions_file) as f:
         for i, line in enumerate(f):
             values = line.strip().split('\t')
             entity = values[0]
             entity2idx[entity] = i
-            text = ' '.join(values[1:])
-            descriptions_batch.append(text)
 
-            if len(descriptions_batch) == emb_batch_size:
-                embedding = encode_batch(descriptions_batch)
-                ent_embeddings.append(embedding)
-                descriptions_batch = []
-                progress.update(emb_batch_size)
+            if get_entity_embeddings:
+                text = ' '.join(values[1:])
+                descriptions_batch.append(text)
 
-        progress.close()
-        if len(descriptions_batch) > 0:
+                if len(descriptions_batch) == emb_batch_size:
+                    embedding = encode_batch(descriptions_batch)
+                    ent_embeddings.append(embedding)
+                    descriptions_batch = []
+                    progress.update(emb_batch_size)
+
+        if get_entity_embeddings and len(descriptions_batch) > 0:
             embedding = encode_batch(descriptions_batch)
             ent_embeddings.append(embedding)
+            ent_embeddings = torch.cat(ent_embeddings)
+            torch.save(ent_embeddings, qent_checkpoint)
+            _log.info(f'Saved entity embeddings to {qent_checkpoint}')
 
-    ent_embeddings = torch.cat(ent_embeddings)
-    # ent_embeddings = torch.load('qent_embeddings.pt', map_location=device)
-    # torch.save(ent_embeddings, 'qent_embeddings.pt')
+        progress.close()
 
     # Read queries
     id2query = dict()
@@ -569,7 +583,6 @@ def rerank(run_file, queries_file, descriptions_file, model, dim, rel_model,
             queryid2results[query_id].append((entity, float(score)))
 
     # Write rerankings
-    run_file_name = osp.splitext(osp.basename(run_file))[0]
     rerank_file_name = f'{run_file_name}-{model}-{rel_model}.run'
     rerank_file = osp.join(osp.dirname(run_file), rerank_file_name)
     progress = tqdm(desc='Reranking', total=len(queryid2results))
@@ -578,7 +591,7 @@ def rerank(run_file, queries_file, descriptions_file, model, dim, rel_model,
             # Encode query
             query = id2query[query_id]
             query_tokens = tokenizer.encode(query, return_tensors='pt',
-                                            max_length=32)
+                                            max_length=64)
             query_embedding = encoder.encode(query_tokens.to(device),
                                              text_mask=None)
 
@@ -599,7 +612,7 @@ def rerank(run_file, queries_file, descriptions_file, model, dim, rel_model,
             scores = scores.flatten().cpu().tolist()
 
             results_scores = zip(selected_results, scores, original_scores)
-            alpha = 0.4
+            alpha = 0.7
             results_scores = [[result, alpha * s1 + (1 - alpha) * s2] for result, s1, s2 in results_scores]
             sorted_entity_score_pairs = sorted(results_scores,
                                                key=lambda x: x[1],
