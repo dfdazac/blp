@@ -90,7 +90,8 @@ def embed_entities(dim, model, rel_model, max_len, emb_batch_size, checkpoint,
 
     entity2idx = dict()
     descriptions_batch = []
-    progress = tqdm(desc='Encoding entity descriptions')
+    progress = tqdm(desc='Encoding entity descriptions',
+                    disable=not get_entity_embeddings)
     with open(descriptions_file) as f:
         for i, line in enumerate(f):
             values = line.strip().split('\t')
@@ -119,7 +120,7 @@ def embed_entities(dim, model, rel_model, max_len, emb_batch_size, checkpoint,
     return ent_embeddings, entity2idx, encoder, tokenizer
 
 
-def rerank_on_fold(fold, queryid2qrels, baseline_run, id2query,
+def rerank_on_fold(fold, qrels, baseline_run, id2query,
                    tokenizer, encoder, entity2idx, ent_embeddings, alpha):
     train_run = dict()
     qrel_run = dict()
@@ -161,7 +162,7 @@ def rerank_on_fold(fold, queryid2qrels, baseline_run, id2query,
                           result, s1, s2 in results_scores]
 
         train_run[query_id] = {r: s for r, s in results_scores}
-        qrel_run[query_id] = queryid2qrels[query_id]
+        qrel_run[query_id] = qrels[query_id]
 
     evaluator = pytrec_eval.RelevanceEvaluator(qrel_run, {'ndcg_cut_100'})
     train_results = evaluator.evaluate(train_run)
@@ -171,8 +172,7 @@ def rerank_on_fold(fold, queryid2qrels, baseline_run, id2query,
 
 
 @ex.automain
-def rerank(model, rel_model, run_file, queries_file, qrels_file, folds_file,
-           _log: Logger):
+def rerank(run_file, queries_file, qrels_file, folds_file, _log: Logger):
     ent_embeddings, entity2idx, encoder, tokenizer = embed_entities()
 
     # Read queries
@@ -184,11 +184,11 @@ def rerank(model, rel_model, run_file, queries_file, qrels_file, folds_file,
             query = ' '.join(values[1:])
             id2query[query_id] = query
 
-    # Read baseline rankings
+    # Read baseline and ground truth rankings
     baseline_run = defaultdict(dict)
-    queryid2qrels = defaultdict(dict)
+    qrels = defaultdict(dict)
     for query_dict, file in ((baseline_run, run_file),
-                             (queryid2qrels, qrels_file)):
+                             (qrels, qrels_file)):
         with open(file) as f:
             for line in f:
                 values = line.strip().split()
@@ -204,6 +204,17 @@ def rerank(model, rel_model, run_file, queries_file, qrels_file, folds_file,
     with open(folds_file) as f:
         folds = json.load(f)
 
+    # Keep only query type of interest
+    new_baseline_run = {}
+    new_qrels = {}
+    for f in folds.values():
+        relevant_queries = f['testing']
+        for query_id in relevant_queries:
+            new_baseline_run.update({query_id: baseline_run[query_id]})
+            new_qrels.update({query_id: qrels[query_id]})
+    baseline_run = new_baseline_run
+    qrels = new_qrels
+
     alpha_choices = np.linspace(0, 1, 20)
     test_run = dict()
     for i, (idx, fold) in enumerate(folds.items()):
@@ -212,7 +223,7 @@ def rerank(model, rel_model, run_file, queries_file, qrels_file, folds_file,
         best_result = 0.0
         best_alpha = alpha_choices[0]
         for alpha in alpha_choices:
-            result, _ = rerank_on_fold(train_queries, queryid2qrels,
+            result, _ = rerank_on_fold(train_queries, qrels,
                                        baseline_run, id2query, tokenizer,
                                        encoder, entity2idx, ent_embeddings,
                                        alpha)
@@ -225,10 +236,10 @@ def rerank(model, rel_model, run_file, queries_file, qrels_file, folds_file,
                   f' with alpha={best_alpha:.3}')
 
         test_queries = fold['testing']
-        fold_mean, fold_run = rerank_on_fold(test_queries, queryid2qrels,
-                                               baseline_run, id2query,
-                                               tokenizer, encoder, entity2idx,
-                                               ent_embeddings, best_alpha)
+        fold_mean, fold_run = rerank_on_fold(test_queries, qrels,
+                                             baseline_run, id2query,
+                                             tokenizer, encoder, entity2idx,
+                                             ent_embeddings, best_alpha)
 
         _log.info(f'Test fold result: {fold_mean:.3f}')
 
@@ -236,18 +247,24 @@ def rerank(model, rel_model, run_file, queries_file, qrels_file, folds_file,
 
     _log.info(f'Finished hyperparameter search')
 
-    metric = 'ndcg_cut_100'
-    evaluator = pytrec_eval.RelevanceEvaluator(queryid2qrels, {metric})
+    metrics = {'ndcg_cut_10', 'ndcg_cut_100'}
+    evaluator = pytrec_eval.RelevanceEvaluator(qrels, metrics)
     baseline_results = evaluator.evaluate(baseline_run)
-    baseline_mean = np.mean([res[metric] for res in baseline_results.values()])
-
+    # This shouldn't be necessary, but there seems to be a bug that requires
+    # to instantiate the evaluator again, otherwise only one metric is obtained
+    # See https://github.com/cvangysel/pytrec_eval/issues/22
+    evaluator = pytrec_eval.RelevanceEvaluator(qrels, metrics)
     test_results = evaluator.evaluate(test_run)
-    test_mean = np.mean([res[metric] for res in test_results.values()])
 
-    _log.info(f'Baseline result: {baseline_mean:.3f}')
-    _log.info(f'Test result: {test_mean:.3f}')
+    for metric in metrics:
+        baseline_mean = np.mean([res[metric] for res in baseline_results.values()])
+        test_mean = np.mean([res[metric] for res in test_results.values()])
 
-    first_scores = [baseline_results[query_id][metric] for query_id in baseline_results]
-    second_scores = [test_results[query_id][metric] for query_id in baseline_results]
+        _log.info(f'Metric: {metric}')
+        _log.info(f'Baseline result: {baseline_mean:.3f}')
+        _log.info(f'Test result: {test_mean:.3f}')
 
-    _log.info(scipy.stats.ttest_rel(first_scores, second_scores))
+        first_scores = [baseline_results[query_id][metric] for query_id in baseline_results]
+        second_scores = [test_results[query_id][metric] for query_id in baseline_results]
+
+        _log.info(scipy.stats.ttest_rel(first_scores, second_scores))
