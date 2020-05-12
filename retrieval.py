@@ -7,6 +7,7 @@ from transformers import BertTokenizer
 from logging import Logger
 from sacred import Experiment
 from sacred.observers import MongoObserver
+from sacred.run import Run
 import json
 import pytrec_eval
 import numpy as np
@@ -15,6 +16,7 @@ import scipy.stats
 from data import GloVeTokenizer
 import utils
 
+OUT_PATH = 'output/'
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 ex = Experiment()
@@ -172,7 +174,8 @@ def rerank_on_fold(fold, qrels, baseline_run, id2query,
 
 
 @ex.automain
-def rerank(run_file, queries_file, qrels_file, folds_file, _log: Logger):
+def rerank(model, rel_model, run_file, queries_file, qrels_file, folds_file,
+           _run: Run, _log: Logger):
     ent_embeddings, entity2idx, encoder, tokenizer = embed_entities()
 
     # Read queries
@@ -215,6 +218,7 @@ def rerank(run_file, queries_file, qrels_file, folds_file, _log: Logger):
     baseline_run = new_baseline_run
     qrels = new_qrels
 
+    # Choose best reranking on training set
     alpha_choices = np.linspace(0, 1, 20)
     test_run = dict()
     for i, (idx, fold) in enumerate(folds.items()):
@@ -246,6 +250,16 @@ def rerank(run_file, queries_file, qrels_file, folds_file, _log: Logger):
         test_run.update(fold_run)
 
     _log.info(f'Finished hyperparameter search')
+    _log.info(f'Saving run file')
+    output_run_path = osp.join(OUT_PATH, f'{_run._id}.run')
+    with open(output_run_path, 'w') as f:
+        for query, results in test_run.items():
+            ranking = sorted(results.items(), key=lambda x: x[1], reverse=True)
+            for i, (entity, score) in enumerate(ranking):
+                f.write(f'{query} Q0 {entity} {i + 1} {score} {model}-{rel_model}\n')
+
+        _run.add_artifact(osp.join(OUT_PATH, f'{_run._id}.run'),
+                          content_type='string')
 
     metrics = {'ndcg_cut_10', 'ndcg_cut_100'}
     evaluator = pytrec_eval.RelevanceEvaluator(qrels, metrics)
