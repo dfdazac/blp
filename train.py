@@ -12,7 +12,7 @@ from transformers import BertTokenizer, get_linear_schedule_with_warmup
 from collections import defaultdict
 import numpy as np
 from sklearn.linear_model import LogisticRegression
-from sklearn.metrics import accuracy_score
+from sklearn.metrics import accuracy_score, balanced_accuracy_score
 
 from data import CATEGORY_IDS
 from data import GraphDataset, TextGraphDataset, GloVeTokenizer
@@ -443,7 +443,7 @@ def node_classification(dataset, checkpoint, _run: Run, _log: Logger):
         model.fit(x_train, y_train)
 
         dev_preds = model.predict(x_dev)
-        dev_acc = accuracy_score(y_dev, dev_preds)
+        dev_acc = balanced_accuracy_score(y_dev, dev_preds)
         _log.info(f'{c:.4f} - {dev_acc:.4f}')
 
         if dev_acc > best_dev_metric:
@@ -457,14 +457,15 @@ def node_classification(dataset, checkpoint, _run: Run, _log: Logger):
     y_train_all = np.concatenate((y_train, y_dev))
     model.fit(x_train_all, y_train_all)
 
-    train_preds = model.predict(x_train_all)
-    train_acc = accuracy_score(y_train_all, train_preds)
+    for metric_fn in (accuracy_score, balanced_accuracy_score):
+        train_preds = model.predict(x_train_all)
+        train_metric = metric_fn(y_train_all, train_preds)
 
-    test_preds = model.predict(x_test)
-    test_acc = accuracy_score(y_test, test_preds)
+        test_preds = model.predict(x_test)
+        test_metric = metric_fn(y_test, test_preds)
 
-    _log.info(f'Train accuracy: {train_acc:.4f}')
-    _log.info(f'Test accuracy: {test_acc:.4f}')
+        _log.info(f'Train {metric_fn.__name__}: {train_metric:.4f}')
+        _log.info(f'Test {metric_fn.__name__}: {test_metric:.4f}')
 
 
 ex.run_commandline()
