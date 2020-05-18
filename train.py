@@ -436,15 +436,15 @@ def node_classification(dataset, checkpoint, _run: Run, _log: Logger):
 
     best_dev_metric = 0.0
     best_c = 0
-    for k in range(-1, 5):
+    for k in range(-4, 2):
         c = 10 ** -k
         model = LogisticRegression(C=c, multi_class='multinomial',
                                    max_iter=1000)
         model.fit(x_train, y_train)
 
         dev_preds = model.predict(x_dev)
-        dev_acc = balanced_accuracy_score(y_dev, dev_preds)
-        _log.info(f'{c:.4f} - {dev_acc:.4f}')
+        dev_acc = accuracy_score(y_dev, dev_preds)
+        _log.info(f'{c:.3f} - {dev_acc:.3f}')
 
         if dev_acc > best_dev_metric:
             best_dev_metric = dev_acc
@@ -464,8 +464,8 @@ def node_classification(dataset, checkpoint, _run: Run, _log: Logger):
         test_preds = model.predict(x_test)
         test_metric = metric_fn(y_test, test_preds)
 
-        _log.info(f'Train {metric_fn.__name__}: {train_metric:.4f}')
-        _log.info(f'Test {metric_fn.__name__}: {test_metric:.4f}')
+        _log.info(f'Train {metric_fn.__name__}: {train_metric:.3f}')
+        _log.info(f'Test {metric_fn.__name__}: {test_metric:.3f}')
 
 
 ex.run_commandline()
