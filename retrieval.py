@@ -2,6 +2,7 @@ import os
 import os.path as osp
 from collections import defaultdict
 import torch
+import torch.nn.functional as F
 from tqdm import tqdm
 from transformers import BertTokenizer
 from logging import Logger
@@ -12,6 +13,8 @@ import json
 import pytrec_eval
 import numpy as np
 import scipy.stats
+import nltk
+from data import DROPPED
 
 from data import GloVeTokenizer
 import utils
@@ -28,14 +31,21 @@ if all([uri, database]):
     ex.observers.append(MongoObserver(uri, database))
 
 
+def remove_stopwords(text):
+    tokens = nltk.word_tokenize(text)
+    text = ' '.join([t for t in tokens if
+                     t.lower() not in DROPPED])
+    return text
+
+
 @ex.config
 def config():
     dim = 128
-    model = 'bed'
+    model = 'bert-dkrl'
     rel_model = 'transe'
     max_len = 64
     emb_batch_size = 512
-    checkpoint = 'output/bed-340.pt'
+    checkpoint = 'output/bed-348.pt'
     run_file = 'data/DBpedia-Entity/runs/v2/bm25f-ca_v2.run'
     queries_file = 'data/DBpedia-Entity/collection/v2/queries-v2_stopped.txt'
     descriptions_file = 'data/DBpedia-Entity/runs/v2/' \
@@ -46,8 +56,7 @@ def config():
 
 @ex.capture
 def embed_entities(dim, model, rel_model, max_len, emb_batch_size, checkpoint,
-                   run_file, descriptions_file, _log: Logger):
-
+                   run_file, descriptions_file, drop_stopwords, _log: Logger):
     def encode_batch(batch):
         tokenized_data = tokenizer.batch_encode_plus(batch,
                                                      max_length=max_len,
@@ -55,7 +64,7 @@ def embed_entities(dim, model, rel_model, max_len, emb_batch_size, checkpoint,
                                                      return_token_type_ids=False,
                                                      return_tensors='pt')
         tokens = tokenized_data['input_ids'].to(device)
-        masks = tokenized_data['attention_mask'].to(device)
+        masks = tokenized_data['attention_mask'].float().to(device)
 
         return encoder.encode(tokens.to(device), masks.to(device))
 
@@ -102,6 +111,8 @@ def embed_entities(dim, model, rel_model, max_len, emb_batch_size, checkpoint,
 
             if get_entity_embeddings:
                 text = ' '.join(values[1:])
+                if drop_stopwords:
+                    text = remove_stopwords(text)
                 descriptions_batch.append(text)
 
                 if len(descriptions_batch) == emb_batch_size:
@@ -110,9 +121,11 @@ def embed_entities(dim, model, rel_model, max_len, emb_batch_size, checkpoint,
                     descriptions_batch = []
                     progress.update(emb_batch_size)
 
-        if get_entity_embeddings and len(descriptions_batch) > 0:
-            embedding = encode_batch(descriptions_batch)
-            ent_embeddings.append(embedding)
+        if get_entity_embeddings:
+            if len(descriptions_batch) > 0:
+                embedding = encode_batch(descriptions_batch)
+                ent_embeddings.append(embedding)
+
             ent_embeddings = torch.cat(ent_embeddings)
             torch.save(ent_embeddings, qent_checkpoint)
             _log.info(f'Saved entity embeddings to {qent_checkpoint}')
@@ -122,8 +135,8 @@ def embed_entities(dim, model, rel_model, max_len, emb_batch_size, checkpoint,
     return ent_embeddings, entity2idx, encoder, tokenizer
 
 
-def rerank_on_fold(fold, qrels, baseline_run, id2query,
-                   tokenizer, encoder, entity2idx, ent_embeddings, alpha):
+def rerank_on_fold(fold, qrels, baseline_run, id2query, tokenizer, encoder,
+                   entity2idx, ent_embeddings, alpha, drop_stopwords):
     train_run = dict()
     qrel_run = dict()
     for query_id in fold:
@@ -131,6 +144,8 @@ def rerank_on_fold(fold, qrels, baseline_run, id2query,
 
         # Encode query
         query = id2query[query_id]
+        if drop_stopwords:
+            query = remove_stopwords(query)
         query_tokens = tokenizer.encode(query, return_tensors='pt',
                                         max_length=64)
         query_embedding = encoder.encode(query_tokens.to(device),
@@ -152,6 +167,9 @@ def rerank_on_fold(fold, qrels, baseline_run, id2query,
                 missing_scores.append(orig_score)
 
         candidate_embeddings = ent_embeddings[ent_ids_to_rerank]
+
+        candidate_embeddings = F.normalize(candidate_embeddings, dim=-1)
+        query_embedding = F.normalize(query_embedding, dim=-1)
 
         # Compute relevance
         scores = candidate_embeddings @ query_embedding.t()
@@ -176,7 +194,11 @@ def rerank_on_fold(fold, qrels, baseline_run, id2query,
 @ex.automain
 def rerank(model, rel_model, run_file, queries_file, qrels_file, folds_file,
            _run: Run, _log: Logger):
-    ent_embeddings, entity2idx, encoder, tokenizer = embed_entities()
+    drop_stopwords = model in {'bert-bow', 'bert-dkrl',
+                               'glove-bow', 'glove-dkrl'}
+
+    ent_embeddings, entity2idx, encoder, tokenizer = embed_entities(
+        drop_stopwords=drop_stopwords)
 
     # Read queries
     id2query = dict()
@@ -230,7 +252,7 @@ def rerank(model, rel_model, run_file, queries_file, qrels_file, folds_file,
             result, _ = rerank_on_fold(train_queries, qrels,
                                        baseline_run, id2query, tokenizer,
                                        encoder, entity2idx, ent_embeddings,
-                                       alpha)
+                                       alpha, drop_stopwords)
             if result > best_result:
                 best_result = result
                 best_alpha = alpha
@@ -243,7 +265,8 @@ def rerank(model, rel_model, run_file, queries_file, qrels_file, folds_file,
         fold_mean, fold_run = rerank_on_fold(test_queries, qrels,
                                              baseline_run, id2query,
                                              tokenizer, encoder, entity2idx,
-                                             ent_embeddings, best_alpha)
+                                             ent_embeddings, best_alpha,
+                                             drop_stopwords)
 
         _log.info(f'Test fold result: {fold_mean:.3f}')
 
@@ -256,10 +279,8 @@ def rerank(model, rel_model, run_file, queries_file, qrels_file, folds_file,
         for query, results in test_run.items():
             ranking = sorted(results.items(), key=lambda x: x[1], reverse=True)
             for i, (entity, score) in enumerate(ranking):
-                f.write(f'{query} Q0 {entity} {i + 1} {score} {model}-{rel_model}\n')
-
-        _run.add_artifact(osp.join(OUT_PATH, f'{_run._id}.run'),
-                          content_type='string')
+                f.write(
+                    f'{query} Q0 {entity} {i + 1} {score} {model}-{rel_model}\n')
 
     metrics = {'ndcg_cut_10', 'ndcg_cut_100'}
     evaluator = pytrec_eval.RelevanceEvaluator(qrels, metrics)
@@ -271,14 +292,17 @@ def rerank(model, rel_model, run_file, queries_file, qrels_file, folds_file,
     test_results = evaluator.evaluate(test_run)
 
     for metric in metrics:
-        baseline_mean = np.mean([res[metric] for res in baseline_results.values()])
+        baseline_mean = np.mean(
+            [res[metric] for res in baseline_results.values()])
         test_mean = np.mean([res[metric] for res in test_results.values()])
 
         _log.info(f'Metric: {metric}')
         _log.info(f'Baseline result: {baseline_mean:.3f}')
         _log.info(f'Test result: {test_mean:.3f}')
 
-        first_scores = [baseline_results[query_id][metric] for query_id in baseline_results]
-        second_scores = [test_results[query_id][metric] for query_id in baseline_results]
+        first_scores = [baseline_results[query_id][metric] for query_id in
+                        baseline_results]
+        second_scores = [test_results[query_id][metric] for query_id in
+                         baseline_results]
 
         _log.info(scipy.stats.ttest_rel(first_scores, second_scores))

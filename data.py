@@ -315,6 +315,22 @@ class GloVeTokenizer:
 
         return encoded
 
+    def batch_encode_plus(self, batch, max_length, **kwargs):
+        batch_tokens = []
+        for text in batch:
+            tokens = self.encode(text, max_length, return_tensors=False)[0]
+            if len(tokens) < max_length:
+                tokens += [0] * (max_length - len(tokens))
+            batch_tokens.append(tokens)
+
+        batch_tokens = torch.tensor(batch_tokens, dtype=torch.long)
+        batch_masks = (batch_tokens > 0).float()
+
+        tokenized_data = {'input_ids': batch_tokens,
+                          'attention_mask': batch_masks}
+
+        return tokenized_data
+
 
 def test_text_graph_dataset():
     from torch.utils.data import DataLoader

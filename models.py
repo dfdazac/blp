@@ -143,7 +143,9 @@ class WordEmbeddingsLP(InductiveLinkPrediction):
 class BOW(WordEmbeddingsLP):
     """Bag-of-words (BOW) description encoder, with BERT low-level embeddings.
     """
-    def _encode_entity(self, text_tok, text_mask):
+    def _encode_entity(self, text_tok, text_mask=None):
+        if text_mask is None:
+            text_mask = torch.ones_like(text_tok, dtype=torch.float)
         # Extract average of word embeddings
         embs = self.embeddings(text_tok)
         lengths = torch.sum(text_mask, dim=-1, keepdim=True)
@@ -170,6 +172,8 @@ class DKRL(WordEmbeddingsLP):
         self.conv2 = nn.Conv1d(self.dim, self.dim, kernel_size=2)
 
     def _encode_entity(self, text_tok, text_mask):
+        if text_mask is None:
+            text_mask = torch.ones_like(text_tok, dtype=torch.float)
         # Extract word embeddings and mask padding
         embs = self.embeddings(text_tok) * text_mask.unsqueeze(dim=-1)
 
@@ -182,8 +186,14 @@ class DKRL(WordEmbeddingsLP):
         embs = F.pad(embs, [0, 1])
         embs = self.conv1(embs)
         embs = embs * text_mask
-        embs = F.max_pool1d(embs, kernel_size=4)
-        text_mask = F.max_pool1d(text_mask, kernel_size=4)
+        if embs.shape[2] >= 4:
+            kernel_size = 4
+        elif embs.shape[2] == 1:
+            kernel_size = 1
+        else:
+            kernel_size = 2
+        embs = F.max_pool1d(embs, kernel_size=kernel_size)
+        text_mask = F.max_pool1d(text_mask, kernel_size=kernel_size)
         embs = torch.tanh(embs)
         embs = F.pad(embs, [0, 1])
         embs = self.conv2(embs)
