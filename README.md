@@ -1,8 +1,7 @@
 # Inductive entity representations from text via link prediction
 
-<img src="fig.png" style="zoom:50%;" />
-
-
+<img src="fig.png" width="400" />
+<br/><br/>
 
 This repository contains the code used for the experiments in the paper "Inductive entity representations from text via link prediction".
 
@@ -160,13 +159,13 @@ After training for link prediction, a tensor of embeddings for all entities is c
 To ease reproducibility, we provide these tensors, which are required in the entity classification task. Click on the ID, download the file into the `output` folder, and decompress it. An experiment can be reproduced using the following command:
 
 ```sh
-python train.py node_classification with checkpoint=ID dataset=DATASET 
+python train.py node_classification with checkpoint=ID dataset=DATASET
 ```
 
 where `DATASET` is either `WN18RR` or `FB15k-237`. For example:
 
 ```sh
-python train.py node_classification with checkpoint=199 dataset=WN18RR 
+python train.py node_classification with checkpoint=199 dataset=WN18RR
 ```
 
 
@@ -254,4 +253,3 @@ This task runs with a pre-trained model saved from the link prediction task. For
 python retrieval.py with model=blp rel_model=transe \
 checkpoint='output/model.pt'
 ```
-
