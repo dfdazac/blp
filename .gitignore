@@ -142,6 +142,8 @@ data/
 *.pt
 
 notebooks/
+output/
+!output/.gitkeep
 
 # TREC run files
 *.run

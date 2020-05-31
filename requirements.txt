@@ -1,0 +1,8 @@
+torch==1.4.0
+scikit-learn
+networkx
+sacred
+nltk
+transformers
+pymongo
+pytrec-eval
