@@ -48,7 +48,7 @@ To check that all dependencies are correctly installed, run a quick test on a sm
 ./scripts/test-umls.sh
 ```
 
-The following table is a adapted from our paper. The last column contains the name of the script that reproduces the experiment for the corresponding row.
+The following table is a adapted from our paper. The last column contains the name of the script that reproduces the experiment for the corresponding model and dataset.
 
 <table>
 <thead>
