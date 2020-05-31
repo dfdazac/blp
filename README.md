@@ -1,7 +1,8 @@
 # Inductive entity representations from text via link prediction
 
 <img src="fig.png" width="400" />
-<br/><br/>
+
+
 
 This repository contains the code used for the experiments in the paper "Inductive entity representations from text via link prediction".
 
