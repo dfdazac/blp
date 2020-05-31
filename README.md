@@ -50,108 +50,99 @@ To check that all dependencies are correctly installed, run a quick test on a sm
 
 The following table is a adapted from our paper. The last column contains the name of the script that reproduces the experiment for the corresponding row.
 
-<style type="text/css">
-.tg  {border-collapse:collapse;border-spacing:0;}
-.tg td{border-color:black;border-style:solid;border-width:1px;font-family:Arial, sans-serif;font-size:14px;
-  overflow:hidden;padding:10px 5px;word-break:normal;}
-.tg th{border-color:black;border-style:solid;border-width:1px;font-family:Arial, sans-serif;font-size:14px;
-  font-weight:normal;overflow:hidden;padding:10px 5px;word-break:normal;}
-.tg .tg-0lax{text-align:left;vertical-align:top}
-</style>
-<table class="tg">
+<table>
 <thead>
   <tr>
-    <th class="tg-0lax"></th>
-    <th class="tg-0lax" colspan="2">WN18RR</th>
-    <th class="tg-0lax" colspan="2">FB15k-237</th>
-    <th class="tg-0lax" colspan="2">Wikidata5M</th>
+    <th></th>
+    <th colspan="2">WN18RR</th>
+    <th colspan="2">FB15k-237</th>
+    <th colspan="2">Wikidata5M</th>
   </tr>
 </thead>
 <tbody>
   <tr>
-    <td class="tg-0lax">Model</td>
-    <td class="tg-0lax">MRR</td>
-    <td class="tg-0lax">Script</td>
-    <td class="tg-0lax">MRR</td>
-    <td class="tg-0lax">Script</td>
-    <td class="tg-0lax">MRR</td>
-    <td class="tg-0lax">Script</td>
+    <td>Model</td>
+    <td>MRR</td>
+    <td>Script</td>
+    <td>MRR</td>
+    <td>Script</td>
+    <td>MRR</td>
+    <td>Script</td>
   </tr>
   <tr>
-    <td class="tg-0lax">GlovE-BOW</td>
-    <td class="tg-0lax">0.170</td>
-    <td class="tg-0lax">glove-bow-wn18rr.sh</td>
-    <td class="tg-0lax">0.172</td>
-    <td class="tg-0lax"><span style="font-weight:400;font-style:normal">glove-bow-fb15k237.sh</span></td>
-    <td class="tg-0lax"><span style="font-weight:400;font-style:normal">0.343</span></td>
-    <td class="tg-0lax"><span style="font-weight:400;font-style:normal">glove-bow-wikidata5m.sh</span></td>
+    <td>GlovE-BOW</td>
+    <td>0.170</td>
+    <td>glove-bow-wn18rr.sh</td>
+    <td>0.172</td>
+    <td>glove-bow-fb15k237.sh</td>
+    <td>0.343</td>
+    <td>glove-bow-wikidata5m.sh</td>
   </tr>
   <tr>
-    <td class="tg-0lax">BE-BOW</td>
-    <td class="tg-0lax">0.180</td>
-    <td class="tg-0lax">bert-bow-wn18rr.sh</td>
-    <td class="tg-0lax">0.173</td>
-    <td class="tg-0lax"><span style="font-weight:400;font-style:normal">bert-bow-fb15k237.sh</span></td>
-    <td class="tg-0lax">0.362</td>
-    <td class="tg-0lax"><span style="font-weight:400;font-style:normal">bert-bow-wikidata5m.sh</span></td>
+    <td>BE-BOW</td>
+    <td>0.180</td>
+    <td>bert-bow-wn18rr.sh</td>
+    <td>0.173</td>
+    <td>bert-bow-fb15k237.sh</td>
+    <td>0.362</td>
+    <td>bert-bow-wikidata5m.sh</td>
   </tr>
   <tr>
-    <td class="tg-0lax">GloVe-DKRL</td>
-    <td class="tg-0lax">0.115</td>
-    <td class="tg-0lax">glove-dkrl-wn18rr.sh</td>
-    <td class="tg-0lax">0.112</td>
-    <td class="tg-0lax"><span style="font-weight:400;font-style:normal">glove-dkrl-fb15k237.sh</span></td>
-    <td class="tg-0lax">0.282</td>
-    <td class="tg-0lax"><span style="font-weight:400;font-style:normal">glove-dkrl-wikidata5m.sh</span></td>
+    <td>GloVe-DKRL</td>
+    <td>0.115</td>
+    <td>glove-dkrl-wn18rr.sh</td>
+    <td>0.112</td>
+    <td>glove-dkrl-fb15k237.sh</td>
+    <td>0.282</td>
+    <td>glove-dkrl-wikidata5m.sh</td>
   </tr>
   <tr>
-    <td class="tg-0lax">BE-DKRL</td>
-    <td class="tg-0lax">0.139</td>
-    <td class="tg-0lax">bert-dkrl-wn18rr.sh</td>
-    <td class="tg-0lax">0.144</td>
-    <td class="tg-0lax"><span style="font-weight:400;font-style:normal">bert-dkrl-fb15k237.sh</span></td>
-    <td class="tg-0lax">0.322</td>
-    <td class="tg-0lax"><span style="font-weight:400;font-style:normal">bert-dkrl-wikidata5m.sh</span></td>
+    <td>BE-DKRL</td>
+    <td>0.139</td>
+    <td>bert-dkrl-wn18rr.sh</td>
+    <td>0.144</td>
+    <td>bert-dkrl-fb15k237.sh</td>
+    <td>0.322</td>
+    <td>bert-dkrl-wikidata5m.sh</td>
   </tr>
   <tr>
-    <td class="tg-0lax">BLP-TransE</td>
-    <td class="tg-0lax">0.285</td>
-    <td class="tg-0lax">blp-transe-wn18rr.sh</td>
-    <td class="tg-0lax">0.195</td>
-    <td class="tg-0lax"><span style="font-weight:400;font-style:normal">blp-transe-fb15k237.sh</span></td>
-    <td class="tg-0lax">0.478</td>
-    <td class="tg-0lax"><span style="font-weight:400;font-style:normal">blp-transe-wikidata5m.sh</span></td>
+    <td>BLP-TransE</td>
+    <td>0.285</td>
+    <td>blp-transe-wn18rr.sh</td>
+    <td>0.195</td>
+    <td>blp-transe-fb15k237.sh</td>
+    <td>0.478</td>
+    <td>blp-transe-wikidata5m.sh</td>
   </tr>
   <tr>
-    <td class="tg-0lax">BLP-DistMult</td>
-    <td class="tg-0lax">0.248</td>
-    <td class="tg-0lax"><span style="font-weight:400;font-style:normal">blp</span>-distmult-wn18rr.sh</td>
-    <td class="tg-0lax">0.146</td>
-    <td class="tg-0lax"><span style="font-weight:400;font-style:normal">blp-distmult-fb15k237.sh</span></td>
-    <td class="tg-0lax">0.472</td>
-    <td class="tg-0lax"><span style="font-weight:400;font-style:normal">blp-distmult-wikidata5m.sh</span></td>
+    <td>BLP-DistMult</td>
+    <td>0.248</td>
+    <td>blp-distmult-wn18rr.sh</td>
+    <td>0.146</td>
+    <td>blp-distmult-fb15k237.sh</td>
+    <td>0.472</td>
+    <td>blp-distmult-wikidata5m.sh</td>
   </tr>
   <tr>
-    <td class="tg-0lax">BLP-ComplEx</td>
-    <td class="tg-0lax">0.261</td>
-    <td class="tg-0lax"><span style="font-weight:400;font-style:normal">blp</span>-complex-wn18rr.sh</td>
-    <td class="tg-0lax">0.148</td>
-    <td class="tg-0lax"><span style="font-weight:400;font-style:normal">blp-complex-fb15k237.sh</span></td>
-    <td class="tg-0lax">0.489</td>
-    <td class="tg-0lax"><span style="font-weight:400;font-style:normal">blp-complex-wikidata5m.sh</span></td>
+    <td>BLP-ComplEx</td>
+    <td>0.261</td>
+    <td>blp-complex-wn18rr.sh</td>
+    <td>0.148</td>
+    <td>blp-complex-fb15k237.sh</td>
+    <td>0.489</td>
+    <td>blp-complex-wikidata5m.sh</td>
   </tr>
   <tr>
-    <td class="tg-0lax">BLP-SimplE</td>
-    <td class="tg-0lax">0.239</td>
-    <td class="tg-0lax"><span style="font-weight:400;font-style:normal">blp</span>-simple-wn18rr.sh</td>
-    <td class="tg-0lax">0.144</td>
-    <td class="tg-0lax"><span style="font-weight:400;font-style:normal">blp-simple-fb15k237.sh</span></td>
-    <td class="tg-0lax">0.493</td>
-    <td class="tg-0lax"><span style="font-weight:400;font-style:normal">blp-simple-wikidata5m.sh</span></td>
+    <td>BLP-SimplE</td>
+    <td>0.239</td>
+    <td>blp-simple-wn18rr.sh</td>
+    <td>0.144</td>
+    <td>blp-simple-fb15k237.sh</td>
+    <td>0.493</td>
+    <td>blp-simple-wikidata5m.sh</td>
   </tr>
 </tbody>
 </table>
-
 
 
 **Entity classification**
