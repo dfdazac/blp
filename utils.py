@@ -5,7 +5,7 @@ import models
 
 def get_model(model, dim, rel_model, loss_fn, num_entities, num_relations,
               encoder_name, regularizer):
-    if model == 'bed':
+    if model == 'blp':
         return models.BertEmbeddingsLP(dim, rel_model, loss_fn, num_relations,
                                        encoder_name, regularizer)
     elif model == 'bert-bow':

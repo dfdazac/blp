@@ -45,7 +45,7 @@ def config():
     rel_model = 'transe'
     max_len = 64
     emb_batch_size = 512
-    checkpoint = 'output/bed-348.pt'
+    checkpoint = 'output/model-348.pt'
     run_file = 'data/DBpedia-Entity/runs/v2/bm25f-ca_v2.run'
     queries_file = 'data/DBpedia-Entity/collection/v2/queries-v2_stopped.txt'
     descriptions_file = 'data/DBpedia-Entity/runs/v2/' \
@@ -68,7 +68,7 @@ def embed_entities(dim, model, rel_model, max_len, emb_batch_size, checkpoint,
 
         return encoder.encode(tokens.to(device), masks.to(device))
 
-    if model.startswith('bert') or model == 'bed':
+    if model.startswith('bert') or model == 'blp':
         tokenizer = BertTokenizer.from_pretrained('bert-base-cased')
     else:
         tokenizer = GloVeTokenizer('data/glove/glove.6B.300d-maps.pt')

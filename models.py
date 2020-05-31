@@ -94,7 +94,7 @@ class InductiveLinkPrediction(LinkPrediction):
 
 
 class BertEmbeddingsLP(InductiveLinkPrediction):
-    """BERT for Entity Descriptions (BED)."""
+    """BERT for Link Prediction (BLP)."""
     def __init__(self, dim, rel_model, loss_fn, num_relations, encoder_name,
                  regularizer):
         super().__init__(dim, rel_model, loss_fn, num_relations, regularizer)

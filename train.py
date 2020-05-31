@@ -49,12 +49,8 @@ def config():
     emb_batch_size = 512
     eval_batch_size = 64
     max_epochs = 5
-    num_workers = 0
     checkpoint = None
-    use_cached_text = True
-    run_file = ''
-    queries_file = ''
-    descriptions_file = ''
+    use_cached_text = False
 
 
 @ex.capture
@@ -264,7 +260,7 @@ def link_prediction(dataset, inductive, dim, model, rel_model, loss_fn,
                                   write_maps_file=True,
                                   num_devices=num_devices)
     else:
-        if model.startswith('bert') or model == 'bed':
+        if model.startswith('bert') or model == 'blp':
             tokenizer = BertTokenizer.from_pretrained(encoder_name)
         else:
             tokenizer = GloVeTokenizer('data/glove/glove.6B.300d-maps.pt')
@@ -331,7 +327,7 @@ def link_prediction(dataset, inductive, dim, model, rel_model, loss_fn,
                                                     num_warmup_steps=warmup,
                                                     num_training_steps=total_steps)
     best_valid_mrr = 0.0
-    checkpoint_file = osp.join(OUT_PATH, f'bed-{_run._id}.pt')
+    checkpoint_file = osp.join(OUT_PATH, f'model-{_run._id}.pt')
     for epoch in range(1, max_epochs + 1):
         train_loss = 0
         for step, data in enumerate(train_loader):
