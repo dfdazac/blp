@@ -1,6 +1,6 @@
 # Inductive entity representations from text via link prediction
 
-<img src="fig.png" style="zoom:75%;" />
+<img src="fig.png" style="zoom:50%;" />
 
 
 
@@ -170,86 +170,77 @@ python train.py node_classification with checkpoint=199 dataset=WN18RR
 ```
 
 
-
-<style type="text/css">
-.tg  {border-collapse:collapse;border-spacing:0;}
-.tg td{border-color:black;border-style:solid;border-width:1px;font-family:Arial, sans-serif;font-size:14px;
-  overflow:hidden;padding:10px 5px;word-break:normal;}
-.tg th{border-color:black;border-style:solid;border-width:1px;font-family:Arial, sans-serif;font-size:14px;
-  font-weight:normal;overflow:hidden;padding:10px 5px;word-break:normal;}
-.tg .tg-0lax{text-align:left;vertical-align:top}
-</style>
-<table class="tg">
+<table>
 <thead>
   <tr>
-    <th class="tg-0lax"></th>
-    <th class="tg-0lax" colspan="2">WN18RR</th>
-    <th class="tg-0lax" colspan="2">FB15k-237</th>
+    <th></th>
+    <th colspan="2">WN18RR</th>
+    <th colspan="2">FB15k-237</th>
   </tr>
 </thead>
 <tbody>
   <tr>
-    <td class="tg-0lax">Model</td>
-    <td class="tg-0lax">Acc.</td>
-    <td class="tg-0lax">ID</td>
-    <td class="tg-0lax">Acc. Bal.</td>
-    <td class="tg-0lax">ID</td>
+    <td>Model</td>
+    <td>Acc.</td>
+    <td>ID</td>
+    <td>Acc. Bal.</td>
+    <td>ID</td>
   </tr>
   <tr>
-    <td class="tg-0lax">GloVe-BOW</td>
-    <td class="tg-0lax">55.3</td>
-    <td class="tg-0lax"><a href="https://surfdrive.surf.nl/files/index.php/s/dAac2HSzTVOZXXF/download" target="_blank" rel="noopener noreferrer">219</a></td>
-    <td class="tg-0lax">34.4</td>
-    <td class="tg-0lax"><a href="https://surfdrive.surf.nl/files/index.php/s/CmM3S3zFBeB2rIx/download" target="_blank" rel="noopener noreferrer">293</a></td>
+    <td>GloVe-BOW</td>
+    <td>55.3</td>
+    <td><a href="https://surfdrive.surf.nl/files/index.php/s/dAac2HSzTVOZXXF/download" target="_blank" rel="noopener noreferrer">219</a></td>
+    <td>34.4</td>
+    <td><a href="https://surfdrive.surf.nl/files/index.php/s/CmM3S3zFBeB2rIx/download" target="_blank" rel="noopener noreferrer">293</a></td>
   </tr>
   <tr>
-    <td class="tg-0lax">BE-BOW</td>
-    <td class="tg-0lax">60.7</td>
-    <td class="tg-0lax"><a href="https://surfdrive.surf.nl/files/index.php/s/3YQzViDa2xfskSt/download" target="_blank" rel="noopener noreferrer">218</a></td>
-    <td class="tg-0lax">28.3</td>
-    <td class="tg-0lax"><a href="https://surfdrive.surf.nl/files/index.php/s/TGWmNq7MXlFPiQ0/download" target="_blank" rel="noopener noreferrer">296</a></td>
+    <td>BE-BOW</td>
+    <td>60.7</td>
+    <td><a href="https://surfdrive.surf.nl/files/index.php/s/3YQzViDa2xfskSt/download" target="_blank" rel="noopener noreferrer">218</a></td>
+    <td>28.3</td>
+    <td><a href="https://surfdrive.surf.nl/files/index.php/s/TGWmNq7MXlFPiQ0/download" target="_blank" rel="noopener noreferrer">296</a></td>
   </tr>
   <tr>
-    <td class="tg-0lax">GloVe-DKRL</td>
-    <td class="tg-0lax">55.5</td>
-    <td class="tg-0lax"><a href="https://surfdrive.surf.nl/files/index.php/s/tTs6x39SY4DxXV2/download" target="_blank" rel="noopener noreferrer">206</a></td>
-    <td class="tg-0lax">26.6</td>
-    <td class="tg-0lax"><a href="https://surfdrive.surf.nl/files/index.php/s/bRrQiLl2ZVxfhDO/download" target="_blank" rel="noopener noreferrer">295</a></td>
+    <td>GloVe-DKRL</td>
+    <td>55.5</td>
+    <td><a href="https://surfdrive.surf.nl/files/index.php/s/tTs6x39SY4DxXV2/download" target="_blank" rel="noopener noreferrer">206</a></td>
+    <td>26.6</td>
+    <td><a href="https://surfdrive.surf.nl/files/index.php/s/bRrQiLl2ZVxfhDO/download" target="_blank" rel="noopener noreferrer">295</a></td>
   </tr>
   <tr>
-    <td class="tg-0lax">BE-DKRL</td>
-    <td class="tg-0lax">48.8</td>
-    <td class="tg-0lax"><a href="https://surfdrive.surf.nl/files/index.php/s/wwfU6lxnywxAeO2/download" target="_blank" rel="noopener noreferrer">207</a></td>
-    <td class="tg-0lax">30.9</td>
-    <td class="tg-0lax"><a href="https://surfdrive.surf.nl/files/index.php/s/nRqY6dWS0ermX4X/download" target="_blank" rel="noopener noreferrer">294</a></td>
+    <td>BE-DKRL</td>
+    <td>48.8</td>
+    <td><a href="https://surfdrive.surf.nl/files/index.php/s/wwfU6lxnywxAeO2/download" target="_blank" rel="noopener noreferrer">207</a></td>
+    <td>30.9</td>
+    <td><a href="https://surfdrive.surf.nl/files/index.php/s/nRqY6dWS0ermX4X/download" target="_blank" rel="noopener noreferrer">294</a></td>
   </tr>
   <tr>
-    <td class="tg-0lax">BLP-TransE</td>
-    <td class="tg-0lax">81.5</td>
-    <td class="tg-0lax"><a href="https://surfdrive.surf.nl/files/index.php/s/SGYvIT2iuPqhett/download" target="_blank" rel="noopener noreferrer">199</a></td>
-    <td class="tg-0lax">42.5</td>
-    <td class="tg-0lax"><a href="https://surfdrive.surf.nl/files/index.php/s/VpmltGpMHzUdbsw/download" target="_blank" rel="noopener noreferrer">297</a></td>
+    <td>BLP-TransE</td>
+    <td>81.5</td>
+    <td><a href="https://surfdrive.surf.nl/files/index.php/s/SGYvIT2iuPqhett/download" target="_blank" rel="noopener noreferrer">199</a></td>
+    <td>42.5</td>
+    <td><a href="https://surfdrive.surf.nl/files/index.php/s/VpmltGpMHzUdbsw/download" target="_blank" rel="noopener noreferrer">297</a></td>
   </tr>
   <tr>
-    <td class="tg-0lax">BLP-DistMult</td>
-    <td class="tg-0lax">78.5</td>
-    <td class="tg-0lax"><a href="https://surfdrive.surf.nl/files/index.php/s/evFOoBufK6BQ69V/download" target="_blank" rel="noopener noreferrer">200</a></td>
-    <td class="tg-0lax">41.0</td>
-    <td class="tg-0lax"><a href="https://surfdrive.surf.nl/files/index.php/s/lXrvINpxHTkmdup/download" target="_blank" rel="noopener noreferrer">298</a></td>
+    <td>BLP-DistMult</td>
+    <td>78.5</td>
+    <td><a href="https://surfdrive.surf.nl/files/index.php/s/evFOoBufK6BQ69V/download" target="_blank" rel="noopener noreferrer">200</a></td>
+    <td>41.0</td>
+    <td><a href="https://surfdrive.surf.nl/files/index.php/s/lXrvINpxHTkmdup/download" target="_blank" rel="noopener noreferrer">298</a></td>
   </tr>
   <tr>
-    <td class="tg-0lax">BLP-ComplEx</td>
-    <td class="tg-0lax">78.1</td>
-    <td class="tg-0lax"><a href="https://surfdrive.surf.nl/files/index.php/s/MNMrI6dddeybgum/download" target="_blank" rel="noopener noreferrer">201</a></td>
-    <td class="tg-0lax">38.1</td>
-    <td class="tg-0lax"><a href="https://surfdrive.surf.nl/files/index.php/s/MkDGfJXy1ANTBeQ/download" target="_blank" rel="noopener noreferrer">300</a></td>
+    <td>BLP-ComplEx</td>
+    <td>78.1</td>
+    <td><a href="https://surfdrive.surf.nl/files/index.php/s/MNMrI6dddeybgum/download" target="_blank" rel="noopener noreferrer">201</a></td>
+    <td>38.1</td>
+    <td><a href="https://surfdrive.surf.nl/files/index.php/s/MkDGfJXy1ANTBeQ/download" target="_blank" rel="noopener noreferrer">300</a></td>
   </tr>
   <tr>
-    <td class="tg-0lax">BLP-SimplE</td>
-    <td class="tg-0lax">83.0</td>
-    <td class="tg-0lax"><a href="https://surfdrive.surf.nl/files/index.php/s/n5sJIY4QZhzo3bU/download" target="_blank" rel="noopener noreferrer">202</a></td>
-    <td class="tg-0lax">45.7</td>
-    <td class="tg-0lax"><a href="https://surfdrive.surf.nl/files/index.php/s/B7nuyaJw9F61dwP/download" target="_blank" rel="noopener noreferrer">299</a></td>
+    <td>BLP-SimplE</td>
+    <td>83.0</td>
+    <td><a href="https://surfdrive.surf.nl/files/index.php/s/n5sJIY4QZhzo3bU/download" target="_blank" rel="noopener noreferrer">202</a></td>
+    <td>45.7</td>
+    <td><a href="https://surfdrive.surf.nl/files/index.php/s/B7nuyaJw9F61dwP/download" target="_blank" rel="noopener noreferrer">299</a></td>
   </tr>
 </tbody>
 </table>
