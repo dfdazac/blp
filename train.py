@@ -33,8 +33,8 @@ if all([uri, database]):
 
 @ex.config
 def config():
-    dataset = 'Wikidata5M'
-    inductive = True
+    dataset = 'umls'
+    inductive = False
     dim = 128
     model = 'bert-bow'
     rel_model = 'transe'
@@ -48,7 +48,7 @@ def config():
     batch_size = 64
     emb_batch_size = 512
     eval_batch_size = 64
-    max_epochs = 5
+    max_epochs = 1
     checkpoint = None
     use_cached_text = False
 
@@ -74,7 +74,10 @@ def eval_link_prediction(model, triples_loader, text_dataset, entities,
     mrr_filt = 0.0
     hits_at_k_filt = {pos: 0.0 for pos in hit_positions}
 
-    if isinstance(model.module, models.InductiveLinkPrediction):
+    if device != torch.device('cpu'):
+        model = model.module
+
+    if isinstance(model, models.InductiveLinkPrediction):
         num_entities = entities.shape[0]
         if compute_filtered:
             max_ent_id = max(filtering_graph.nodes)
@@ -83,12 +86,12 @@ def eval_link_prediction(model, triples_loader, text_dataset, entities,
         ent2idx = utils.make_ent2idx(entities, max_ent_id)
     else:
         # Transductive models have a lookup table of embeddings
-        num_entities = model.module.ent_emb.num_embeddings
+        num_entities = model.ent_emb.num_embeddings
         ent2idx = torch.arange(num_entities)
         entities = ent2idx
 
     # Create embedding lookup table for evaluation
-    ent_emb = torch.zeros((num_entities, model.module.dim), dtype=torch.float,
+    ent_emb = torch.zeros((num_entities, model.dim), dtype=torch.float,
                           device=device)
     idx = 0
     num_iters = np.ceil(num_entities / emb_batch_size)
@@ -97,7 +100,7 @@ def eval_link_prediction(model, triples_loader, text_dataset, entities,
         # Get a batch of entity IDs and encode them
         batch_ents = entities[idx:idx + emb_batch_size]
 
-        if isinstance(model.module, models.InductiveLinkPrediction):
+        if isinstance(model, models.InductiveLinkPrediction):
             # Encode with entity descriptions
             data = text_dataset.get_entity_description(batch_ents)
             text_tok, text_mask, text_len = data
@@ -134,11 +137,11 @@ def eval_link_prediction(model, triples_loader, text_dataset, entities,
         # Embed triple
         head_embs = ent_emb.squeeze()[heads]
         tail_embs = ent_emb.squeeze()[tails]
-        rel_embs = model.module.rel_emb(rels.to(device))
+        rel_embs = model.rel_emb(rels.to(device))
 
         # Score all possible heads and tails
-        heads_predictions = model.module.score_fn(ent_emb, tail_embs, rel_embs)
-        tails_predictions = model.module.score_fn(head_embs, ent_emb, rel_embs)
+        heads_predictions = model.score_fn(ent_emb, tail_embs, rel_embs)
+        tails_predictions = model.score_fn(head_embs, ent_emb, rel_embs)
 
         pred_ents = torch.cat((heads_predictions, tails_predictions))
         true_ents = torch.cat((heads, tails))
