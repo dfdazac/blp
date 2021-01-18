@@ -1,8 +1,10 @@
-torch==1.4.0
+--find-links https://download.pytorch.org/whl/torch_stable.html
+torch==1.4.0+cu100
 scikit-learn
 networkx
 sacred
+dnspython
 nltk
-transformers
+transformers==2.4.0
 pymongo
 pytrec-eval

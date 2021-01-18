@@ -41,14 +41,14 @@ def config():
     loss_fn = 'margin'
     encoder_name = 'bert-base-cased'
     regularizer = 1e-2
-    max_len = 64
+    max_len = 32
     num_negatives = 64
     lr = 1e-3
     use_scheduler = False
     batch_size = 64
     emb_batch_size = 512
     eval_batch_size = 64
-    max_epochs = 1
+    max_epochs = 5
     checkpoint = None
     use_cached_text = False
 
@@ -104,7 +104,8 @@ def eval_link_prediction(model, triples_loader, text_dataset, entities,
             # Encode with entity descriptions
             data = text_dataset.get_entity_description(batch_ents)
             text_tok, text_mask, text_len = data
-            batch_emb = model(text_tok.unsqueeze(1), text_mask.unsqueeze(1))
+            batch_emb = model(text_tok.unsqueeze(1).to(device),
+                              text_mask.unsqueeze(1).to(device))
         else:
             # Encode from lookup table
             batch_emb = model(batch_ents)
