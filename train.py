@@ -34,21 +34,21 @@ if all([uri, database]):
 @ex.config
 def config():
     dataset = 'umls'
-    inductive = False
+    inductive = True
     dim = 128
-    model = 'bert-bow'
+    model = 'blp'
     rel_model = 'transe'
     loss_fn = 'margin'
     encoder_name = 'bert-base-cased'
-    regularizer = 1e-2
+    regularizer = 0
     max_len = 32
     num_negatives = 64
-    lr = 1e-3
-    use_scheduler = False
+    lr = 2e-5
+    use_scheduler = True
     batch_size = 64
     emb_batch_size = 512
     eval_batch_size = 64
-    max_epochs = 5
+    max_epochs = 40
     checkpoint = None
     use_cached_text = False
 

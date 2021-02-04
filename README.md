@@ -1,13 +1,28 @@
 # Inductive entity representations from text via link prediction
 
+<div>
+<a href="https://github.com/migalkin/StarE/blob/master/LICENSE">
+    <img src="https://img.shields.io/badge/License-MIT-blue.svg"></a>
+    <a href="https://doi.org/10.5281/zenodo.4501273"><img src="https://zenodo.org/badge/DOI/10.5281/zenodo.4501273.svg" alt="DOI"></a>
+</div>
+
+<br><br>
 <div align="center">
 <img src="fig.png" width="400" />
 </div>
+<br><br>
 
+This repository contains the code used for the experiments in the paper "Inductive entity representations from text via link prediction", presented at The Web Conference, 2021.
 
-This repository contains the code used for the experiments in the paper "Inductive entity representations from text via link prediction".
+In this work, we show how a BERT-based text encoder can be fine-tuned with a link prediction objective, in a graph where entities have an associated textual description. We call the resulting model BLP. There are three interesting properties of a trained BLP model:
+
+- It can predict a link between entities, even if one or both were not present during training.
+- It produces useful representations for a classifier, that don't require retraining the encoder.
+- It improves an information retrieval system, by better matching entities and questions about them.
 
 ## Usage
+
+Please follow the instructions next to reproduce our experiments, and to train a model with your own data.
 
 ### 1. Install the requirements
 
@@ -38,6 +53,8 @@ Then use `tar` to extract the files, e.g.
 tar -xzvf WN18RR.tar.gz
 ```
 
+Note that the KG-related files above contain both *transductive* and *inductive* splits. Transductive splits are commonly used to evaluate lookup-table methods like ComplEx, while inductive splits contain entities in the test set that are not present in the training set. Files with triples for the inductive case have the `ind` prefix, e.g. `ind-train.txt`.
+
 ### 2. Reproduce the experiments
 
 **Link prediction**
@@ -48,7 +65,11 @@ To check that all dependencies are correctly installed, run a quick test on a sm
 ./scripts/test-umls.sh
 ```
 
-The following table is a adapted from our paper. The last column contains the name of the script that reproduces the experiment for the corresponding model and dataset.
+The following table is a adapted from our paper. The "Script" column contains the name of the script that reproduces the experiment for the corresponding model and dataset. For example, if you want to reproduce the results of BLP-TransE on FB15k-237, run
+
+```sh
+./scripts/blp-transe-fb15k237.sh
+```
 
 <table>
 <thead>
@@ -245,4 +266,23 @@ This task runs with a pre-trained model saved from the link prediction task. For
 ```sh
 python retrieval.py with model=blp rel_model=transe \
 checkpoint='output/model.pt'
+```
+
+
+## Using your own data
+
+If you have a knowledge graph where entities have textual descriptions, you can train a BLP model for the tasks of inductive link prediction, and entity classification (if you also have labels for entities).
+
+To do this, add a new folder inside the `data` folder (let's call it `my-kg`). Store in it a file containing the triples in your KG. This should be a text file with one tab-separated triple per line (let's call it `all-triples.tsv`).
+
+To generate inductive splits, you can use `data/utils.py`. If you run
+
+```sh
+python utils.py drop_entities --file=my-kg/all-triples.tsv
+```
+
+this will generate `ind-train.tsv`, `ind-dev.tsv`, `ind-test.tsv` inside `my-kg` (see Appendix A in our paper for details on how these are generated). You can then train BLP-TransE with
+
+```sh
+python train.py with dataset='my-kg'
 ```
