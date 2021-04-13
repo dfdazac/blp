@@ -286,3 +286,7 @@ this will generate `ind-train.tsv`, `ind-dev.tsv`, `ind-test.tsv` inside `my-kg`
 ```sh
 python train.py with dataset='my-kg'
 ```
+
+## Alternative implementations
+
+- [Contextual Knowledge Bases](https://github.com/raphaelsty/ckb) by Raphael Sourty
