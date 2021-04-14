@@ -12,7 +12,17 @@
 </div>
 <br><br>
 
-This repository contains the code used for the experiments in the paper "Inductive entity representations from text via link prediction", presented at The Web Conference, 2021.
+This repository contains the code used for the experiments in the paper "Inductive entity representations from text via link prediction", presented at The Web Conference, 2021. To refer to our work, please use the following:
+
+```bibtex
+@inproceedings{daza2021inductive,
+    title = {Inductive Entity Representations from Text via Link Prediction},
+    author = {Daniel Daza and Michael Cochez and Paul Groth},
+    booktitle = {Proceedings of The Web Conference 2021},
+    year = {2021},
+    doi = {10.1145/3442381.3450141},
+}
+```
 
 In this work, we show how a BERT-based text encoder can be fine-tuned with a link prediction objective, in a graph where entities have an associated textual description. We call the resulting model BLP. There are three interesting properties of a trained BLP model:
 
