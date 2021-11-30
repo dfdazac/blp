@@ -13,6 +13,7 @@ from collections import defaultdict
 import numpy as np
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import accuracy_score, balanced_accuracy_score
+import joblib
 
 from data import CATEGORY_IDS
 from data import GraphDataset, TextGraphDataset, GloVeTokenizer
@@ -468,6 +469,11 @@ def node_classification(dataset, checkpoint, _run: Run, _log: Logger):
 
         _log.info(f'Train {metric_fn.__name__}: {train_metric:.3f}')
         _log.info(f'Test {metric_fn.__name__}: {test_metric:.3f}')
+
+    id_to_class = {v: k for k, v in class2label.items()}
+    joblib.dump({'model': model,
+                 'id_to_class': id_to_class},
+                osp.join('output', f'classifier-{checkpoint}.joblib'))
 
 
 ex.run_commandline()

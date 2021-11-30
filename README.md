@@ -1,7 +1,7 @@
 # Inductive entity representations from text via link prediction
 
 <div>
-<a href="https://github.com/migalkin/StarE/blob/master/LICENSE">
+<a href="https://github.com/dfdazac/blp/blob/master/LICENSE">
     <img src="https://img.shields.io/badge/License-MIT-blue.svg"></a>
     <a href="https://doi.org/10.5281/zenodo.4501273"><img src="https://zenodo.org/badge/DOI/10.5281/zenodo.4501273.svg" alt="DOI"></a>
 </div>
