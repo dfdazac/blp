@@ -49,7 +49,7 @@ def get_negative_sampling_indices(batch_size, num_negatives, repeats=1):
          [-, 7]]
     they are then replaced with a random index from a row other than the row
     to which they belong:
-        [[0, 3],
+        [[0, 2],
          [5, 3],
          [4, 6],
          [1, 7]]
