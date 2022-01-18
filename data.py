@@ -200,17 +200,19 @@ class TextGraphDataset(GraphDataset):
             max_len = tokenizer.max_len
 
         cached_text_path = osp.join(self.directory, 'text_data.pt')
+        need_to_load_text = True
         if use_cached_text:
+            logger = logging.getLogger()
             if osp.exists(cached_text_path):
                 self.text_data = torch.load(cached_text_path)
-                logger = logging.getLogger()
                 logger.info(f'Loaded cached text data for'
                             f' {self.text_data.shape[0]} entities,'
                             f' and maximum length {self.text_data.shape[1]}.')
+                need_to_load_text = False
             else:
-                raise LookupError(f'Cached text file not found at'
-                                  f' {cached_text_path}')
-        else:
+                logger.info(f'Cached text data not found.')
+
+        if need_to_load_text:
             self.text_data = torch.zeros((len(ent_ids), max_len + 1),
                                          dtype=torch.long)
             read_entities = set()
