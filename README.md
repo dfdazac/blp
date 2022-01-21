@@ -88,7 +88,7 @@ skip training and obtain the evaluation results from them. Download links can be
 
 We also provide evaluation scripts for these pre-trained models, which have the same names as training scripts, appended with `-pretrained`. For example,
 to reproduce the results of BLP-TransE on FB15k-237, first download the weights by following the link 
-in the table, and run
+in the table, untar the file, and run
 
 ```sh
 ./scripts/blp-transe-fb15k237-pretrained.sh
