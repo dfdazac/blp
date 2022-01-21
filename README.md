@@ -378,7 +378,7 @@ To do this, add a new folder inside the `data` folder (let's call it `my-kg`). S
 To generate inductive splits, you can use `data/utils.py`. If you run
 
 ```sh
-python utils.py drop_entities --file=my-kg/all-triples.tsv
+python data/utils.py drop_entities --file=my-kg/all-triples.tsv
 ```
 
 this will generate `ind-train.tsv`, `ind-dev.tsv`, `ind-test.tsv` inside `my-kg` (see Appendix A in our paper for details on how these are generated). You can then train BLP-TransE with

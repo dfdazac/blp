@@ -8,3 +8,4 @@ nltk
 transformers==2.4.0
 pymongo
 pytrec-eval
+rdflib
