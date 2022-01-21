@@ -67,7 +67,7 @@ Note that the KG-related files above contain both *transductive* and *inductive*
 
 ### 2. Reproduce the experiments
 
-**Link prediction**
+#### Link prediction
 
 To check that all dependencies are correctly installed, run a quick test on a small graph (this should take less than 1 minute on GPU):
 
@@ -75,10 +75,23 @@ To check that all dependencies are correctly installed, run a quick test on a sm
 ./scripts/test-umls.sh
 ```
 
-The following table is a adapted from our paper. The "Script" column contains the name of the script that reproduces the experiment for the corresponding model and dataset. For example, if you want to reproduce the results of BLP-TransE on FB15k-237, run
+The table below is a adapted from our paper. The "Script" column contains the name of the script that reproduces the experiment for the corresponding model and dataset. For example, if you want to reproduce the results of BLP-TransE on FB15k-237, run
 
 ```sh
 ./scripts/blp-transe-fb15k237.sh
+```
+
+##### Pre-trained models
+
+We have additionally uploaded weights of pre-trained models for most of these experiments, so that it's possible to
+skip training and obtain the evaluation results from them. Download links can be found in the table, on each evaluation script.
+
+We also provide evaluation scripts for these pre-trained models, which have the same names as training scripts, appended with `-pretrained`. For example,
+to reproduce the results of BLP-TransE on FB15k-237, first download the weights by following the link 
+in the table, and run
+
+```sh
+./scripts/blp-transe-fb15k237-pretrained.sh
 ```
 
 <table>
@@ -94,89 +107,166 @@ The following table is a adapted from our paper. The "Script" column contains th
   <tr>
     <td>Model</td>
     <td>MRR</td>
-    <td>Script</td>
+    <td>Script + weights link</td>
     <td>MRR</td>
-    <td>Script</td>
+    <td>Script + weights link</td>
     <td>MRR</td>
-    <td>Script</td>
+    <td>Script + weights link</td>
   </tr>
   <tr>
     <td>GlovE-BOW</td>
     <td>0.170</td>
-    <td>glove-bow-wn18rr.sh</td>
+    <td>
+        <a href="https://surfdrive.surf.nl/files/index.php/s/mubtnpQiMgEg8RA/download">
+        glove-bow-wn18rr.sh
+        </a>
+    </td>
     <td>0.172</td>
-    <td>glove-bow-fb15k237.sh</td>
+    <td>
+        <a href="https://surfdrive.surf.nl/files/index.php/s/6QoRSoW8O3Uo9BT/download">
+        glove-bow-fb15k237.sh
+        </a>
+    </td>
     <td>0.343</td>
-    <td>glove-bow-wikidata5m.sh</td>
+    <td>
+        <a href="https://surfdrive.surf.nl/files/index.php/s/vHbQonvN7WNLCj1/download">
+        glove-bow-wikidata5m.sh
+        </a>
+    </td>
   </tr>
   <tr>
     <td>BE-BOW</td>
     <td>0.180</td>
-    <td>bert-bow-wn18rr.sh</td>
+    <td><a href="https://surfdrive.surf.nl/files/index.php/s/utpia6zZ0ChmmY6/download">
+        bert-bow-wn18rr.sh
+        </a>
+    </td>
     <td>0.173</td>
-    <td>bert-bow-fb15k237.sh</td>
+    <td>
+        <a href="https://surfdrive.surf.nl/files/index.php/s/r3ROfmxL9FCPzcm/download">
+        bert-bow-fb15k237.sh
+        </a>
+    </td>
     <td>0.362</td>
-    <td>bert-bow-wikidata5m.sh</td>
+    <td>
+        <a href="https://surfdrive.surf.nl/files/index.php/s/iZk82Mb0GFENXkJ/download">
+        bert-bow-wikidata5m.sh
+        </a>
+    </td>
   </tr>
   <tr>
     <td>GloVe-DKRL</td>
     <td>0.115</td>
-    <td>glove-dkrl-wn18rr.sh</td>
+    <td>glove-dkrl-wn18rr.sh
+    </td>
     <td>0.112</td>
-    <td>glove-dkrl-fb15k237.sh</td>
+    <td>glove-dkrl-fb15k237.sh
+    </td>
     <td>0.282</td>
-    <td>glove-dkrl-wikidata5m.sh</td>
+    <td>glove-dkrl-wikidata5m.sh
+    </td>
   </tr>
   <tr>
     <td>BE-DKRL</td>
     <td>0.139</td>
-    <td>bert-dkrl-wn18rr.sh</td>
+    <td>bert-dkrl-wn18rr.sh
+    </td>
     <td>0.144</td>
-    <td>bert-dkrl-fb15k237.sh</td>
+    <td>bert-dkrl-fb15k237.sh
+    </td>
     <td>0.322</td>
-    <td>bert-dkrl-wikidata5m.sh</td>
+    <td>bert-dkrl-wikidata5m.sh
+    </td>
   </tr>
   <tr>
     <td>BLP-TransE</td>
     <td>0.285</td>
-    <td>blp-transe-wn18rr.sh</td>
+    <td>
+        <a href="https://surfdrive.surf.nl/files/index.php/s/p1bBjvWmEnYiOcv/download">
+        blp-transe-wn18rr.sh
+        </a>
+    </td>
     <td>0.195</td>
-    <td>blp-transe-fb15k237.sh</td>
+    <td>
+        <a href="https://surfdrive.surf.nl/files/index.php/s/VflDDMZvT8zDkBp/download">
+        blp-transe-fb15k237.sh
+        </a>
+    </td>
     <td>0.478</td>
-    <td>blp-transe-wikidata5m.sh</td>
+    <td>
+        <a href="https://surfdrive.surf.nl/files/index.php/s/89I8ry3CIqNPpJe/download">
+        blp-transe-wikidata5m.sh
+        </a>
+    </td>
   </tr>
   <tr>
     <td>BLP-DistMult</td>
     <td>0.248</td>
-    <td>blp-distmult-wn18rr.sh</td>
+    <td>
+        <a href="https://surfdrive.surf.nl/files/index.php/s/DcvowlxjOyjpeyA/download">
+        blp-distmult-wn18rr.sh
+        </a>
+    </td>
     <td>0.146</td>
-    <td>blp-distmult-fb15k237.sh</td>
+    <td>
+        <a href="https://surfdrive.surf.nl/files/index.php/s/v8jjROCIEiMbfLX/download">
+        blp-distmult-fb15k237.sh
+        </a>
+    </td>
     <td>0.472</td>
-    <td>blp-distmult-wikidata5m.sh</td>
+    <td>
+        <a href="https://surfdrive.surf.nl/files/index.php/s/6hT45xhkF3SYh5X/download">
+        blp-distmult-wikidata5m.sh
+        </a>
+    </td>
   </tr>
   <tr>
     <td>BLP-ComplEx</td>
     <td>0.261</td>
-    <td>blp-complex-wn18rr.sh</td>
+    <td>
+        <a href="https://surfdrive.surf.nl/files/index.php/s/2uNOjbs0TDMdg6V/download">
+        blp-complex-wn18rr.sh
+        </a>
+    </td>
     <td>0.148</td>
-    <td>blp-complex-fb15k237.sh</td>
+    <td>
+        <a href="https://surfdrive.surf.nl/files/index.php/s/I1pjP5AVPSD3zU4/download">
+        blp-complex-fb15k237.sh
+        </a>
+    </td>
     <td>0.489</td>
-    <td>blp-complex-wikidata5m.sh</td>
+    <td>
+        <a href="https://surfdrive.surf.nl/files/index.php/s/ebThqrrv2W6ti3a/download">
+        blp-complex-wikidata5m.sh
+        </a>
+    </td>
   </tr>
   <tr>
     <td>BLP-SimplE</td>
     <td>0.239</td>
-    <td>blp-simple-wn18rr.sh</td>
+    <td>
+        <a href="https://surfdrive.surf.nl/files/index.php/s/1Gc8A6jWQ4TdxWC/download">
+        blp-simple-wn18rr.sh
+        </a>
+    </td>
     <td>0.144</td>
-    <td>blp-simple-fb15k237.sh</td>
+    <td>
+        <a href="https://surfdrive.surf.nl/files/index.php/s/CbufsVlgD9fbnLW/download">
+        blp-simple-fb15k237.sh
+        </a>
+    </td>
     <td>0.493</td>
-    <td>blp-simple-wikidata5m.sh</td>
+    <td>
+        <a href="https://surfdrive.surf.nl/files/index.php/s/1IZixV9mqiG0dTz/download">
+        blp-simple-wikidata5m.sh
+        </a>
+    </td>
   </tr>
 </tbody>
 </table>
 
 
-**Entity classification**
+#### Entity classification
 
 After training for link prediction, a tensor of embeddings for all entities is computed and saved in a file with name `ent_emb-[ID].pt` where `[ID]` is the id of the experiment in the database (we use [Sacred](https://sacred.readthedocs.io/en/stable/index.html) to manage experiments). Another file called `ents-[ID].pt` contains entity identifiers for every row in the tensor of embeddings.
 
@@ -269,7 +359,7 @@ python train.py node_classification with checkpoint=199 dataset=WN18RR
 </table>
 
 
-**Information retrieval**
+#### Information retrieval
 
 This task runs with a pre-trained model saved from the link prediction task. For example, if the model trained is `blp` with `transe` and it was saved as `model.pt`, then run the following command to run the information retrieval task:
 
