@@ -102,8 +102,8 @@ def hit_at_k(predictions, ground_truth_idx, hit_positions):
 
     for position in hit_positions:
         idx_at_k = indices[:, :position]
-        hits_at_k = (idx_at_k == ground_truth_idx).sum(dim=1).float().mean()
-        hits.append(hits_at_k.item())
+        hits_at_k = (idx_at_k == ground_truth_idx).sum(dim=1).float()
+        hits.append(hits_at_k)
 
     return hits
 

@@ -121,7 +121,7 @@ def eval_link_prediction(model, triples_loader, text_dataset, entities,
 
     ent_emb = ent_emb.unsqueeze(0)
 
-    batch_count = 0
+    num_predictions = 0
     _log.info('Computing metrics on set of triples')
     total = len(triples_loader) if max_num_batches is None else max_num_batches
     for i, triples in enumerate(triples_loader):
@@ -148,10 +148,12 @@ def eval_link_prediction(model, triples_loader, text_dataset, entities,
         pred_ents = torch.cat((heads_predictions, tails_predictions))
         true_ents = torch.cat((heads, tails))
 
+        num_predictions += pred_ents.shape[0]
         hits = utils.hit_at_k(pred_ents, true_ents, hit_positions)
         for j, h in enumerate(hits):
-            hits_at_k[hit_positions[j]] += h
-        mrr += utils.mrr(pred_ents, true_ents).mean().item()
+            hits_at_k[hit_positions[j]] += h.sum().item()
+        mrr_list = utils.mrr(pred_ents, true_ents)
+        mrr += mrr_list.sum().item()
 
         if compute_filtered:
             filters = utils.get_triple_filters(triples, filtering_graph,
@@ -162,9 +164,9 @@ def eval_link_prediction(model, triples_loader, text_dataset, entities,
             pred_ents[filter_mask] = pred_ents.min() - 1.0
             hits_filt = utils.hit_at_k(pred_ents, true_ents, hit_positions)
             for j, h in enumerate(hits_filt):
-                hits_at_k_filt[hit_positions[j]] += h
+                hits_at_k_filt[hit_positions[j]] += h.sum().item()
             mrr_filt_per_triple = utils.mrr(pred_ents, true_ents)
-            mrr_filt += mrr_filt_per_triple.mean().item()
+            mrr_filt += mrr_filt_per_triple.sum().item()
 
             if new_entities is not None:
                 by_position = utils.split_by_new_position(triples,
@@ -182,16 +184,16 @@ def eval_link_prediction(model, triples_loader, text_dataset, entities,
                 mrr_by_category += batch_mrr_by_cat
                 mrr_cat_count += batch_mrr_cat_count
 
-        batch_count += 1
         if (i + 1) % int(0.2 * total) == 0:
             _log.info(f'[{i + 1:,}/{total:,}]')
 
+    _log.info(f'The total number of predictions is {num_predictions:,}')
     for hits_dict in (hits_at_k, hits_at_k_filt):
         for k in hits_dict:
-            hits_dict[k] /= batch_count
+            hits_dict[k] /= num_predictions
 
-    mrr = mrr / batch_count
-    mrr_filt = mrr_filt / batch_count
+    mrr = mrr / num_predictions
+    mrr_filt = mrr_filt / num_predictions
 
     log_str = f'{prefix} mrr: {mrr:.4f}  '
     _run.log_scalar(f'{prefix}_mrr', mrr, epoch)
