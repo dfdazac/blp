@@ -83,45 +83,32 @@ def get_triple_filters(triples, graph, num_ents, ent2idx):
     return heads_filter, tails_filter
 
 
-def hit_at_k(predictions, ground_truth_idx, hit_positions):
+def get_metrics(pred_scores: torch.Tensor,
+                true_idx: torch.Tensor,
+                k_values: torch.Tensor):
     """Calculates mean number of hits@k. Higher values are ranked first.
 
     Args:
-        predictions: BxN tensor of prediction values where B is batch size
+        pred_scores: (B, N) tensor of prediction values where B is batch size
             and N number of classes.
-        ground_truth_idx: Bx1 tensor with index of ground truth class
-        hit_positions: list, containing number of top K results to be
+        ground_truth_idx: (B, 1) tensor with index of ground truth class
+        k_values: (1, k) tensor containing number of top-k results to be
             considered as hits.
 
-    Returns: list of float, of the same length as hit_positions, containing
-        Hits@K score.
+    Returns:
+        reciprocals: (B, 1) tensor containing reciprocals of the ranks
+        hits: (B, k) tensor containing the number of hits for each value of k
     """
-    max_position = max(hit_positions)
-    _, indices = predictions.topk(k=max_position)
-    hits = []
+    # Based on PyKEEN's implementation
+    true_scores = pred_scores.gather(dim=1, index=true_idx)
+    best_rank = (pred_scores > true_scores).sum(dim=1, keepdim=True) + 1
+    worst_rank = (pred_scores >= true_scores).sum(dim=1, keepdim=True)
+    average_rank = (best_rank + worst_rank).float() * 0.5
 
-    for position in hit_positions:
-        idx_at_k = indices[:, :position]
-        hits_at_k = (idx_at_k == ground_truth_idx).sum(dim=1).float()
-        hits.append(hits_at_k)
+    reciprocals = average_rank.reciprocal()
+    hits = average_rank <= k_values
 
-    return hits
-
-
-def mrr(predictions, ground_truth_idx):
-    """Calculates mean reciprocal rank (MRR) for given predictions
-    and ground truth values. Higher values are ranked first.
-
-    Args:
-        predictions: BxN tensor of prediction values where B is batch size
-            and N number of classes.
-        ground_truth_idx: Bx1 tensor with index of ground truth class
-
-    Returns: float, Mean reciprocal rank score
-    """
-    indices = predictions.argsort(descending=True)
-    rankings = (indices == ground_truth_idx).nonzero()[:, 1].float() + 1.0
-    return rankings.reciprocal()
+    return reciprocals, hits
 
 
 def split_by_new_position(triples, mrr_values, new_entities):

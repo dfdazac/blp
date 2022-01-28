@@ -70,6 +70,7 @@ def eval_link_prediction(model, triples_loader, text_dataset, entities,
     mrr_cat_count = torch.zeros([1, 4], dtype=torch.float).to(device)
 
     hit_positions = [1, 3, 10]
+    k_values = torch.tensor([hit_positions], device=device)
     hits_at_k = {pos: 0.0 for pos in hit_positions}
     mrr = 0.0
     mrr_filt = 0.0
@@ -149,11 +150,11 @@ def eval_link_prediction(model, triples_loader, text_dataset, entities,
         true_ents = torch.cat((heads, tails))
 
         num_predictions += pred_ents.shape[0]
-        hits = utils.hit_at_k(pred_ents, true_ents, hit_positions)
-        for j, h in enumerate(hits):
-            hits_at_k[hit_positions[j]] += h.sum().item()
-        mrr_list = utils.mrr(pred_ents, true_ents)
-        mrr += mrr_list.sum().item()
+        reciprocals, hits = utils.get_metrics(pred_ents, true_ents, k_values)
+        mrr += reciprocals.sum().item()
+        hits_sum = hits.sum(dim=0)
+        for j, k in enumerate(hit_positions):
+            hits_at_k[k] += hits_sum[j].item()
 
         if compute_filtered:
             filters = utils.get_triple_filters(triples, filtering_graph,
@@ -162,15 +163,17 @@ def eval_link_prediction(model, triples_loader, text_dataset, entities,
             # Filter entities by assigning them the lowest score in the batch
             filter_mask = torch.cat((heads_filter, tails_filter)).to(device)
             pred_ents[filter_mask] = pred_ents.min() - 1.0
-            hits_filt = utils.hit_at_k(pred_ents, true_ents, hit_positions)
-            for j, h in enumerate(hits_filt):
-                hits_at_k_filt[hit_positions[j]] += h.sum().item()
-            mrr_filt_per_triple = utils.mrr(pred_ents, true_ents)
-            mrr_filt += mrr_filt_per_triple.sum().item()
 
+            reciprocals, hits = utils.get_metrics(pred_ents, true_ents, k_values)
+            mrr_filt += reciprocals.sum().item()
+            hits_sum = hits.sum(dim=0)
+            for j, k in enumerate(hit_positions):
+                hits_at_k_filt[k] += hits_sum[j].item()
+
+            reciprocals = reciprocals.squeeze()
             if new_entities is not None:
                 by_position = utils.split_by_new_position(triples,
-                                                          mrr_filt_per_triple,
+                                                          reciprocals,
                                                           new_entities)
                 batch_mrr_by_position, batch_mrr_pos_counts = by_position
                 mrr_by_position += batch_mrr_by_position
@@ -178,7 +181,7 @@ def eval_link_prediction(model, triples_loader, text_dataset, entities,
 
             if triples_loader.dataset.has_rel_categories:
                 by_category = utils.split_by_category(triples,
-                                                      mrr_filt_per_triple,
+                                                      reciprocals,
                                                       rel_categories)
                 batch_mrr_by_cat, batch_mrr_cat_count = by_category
                 mrr_by_category += batch_mrr_by_cat
